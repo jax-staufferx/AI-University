@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import LearningSession, Module, ModuleStatus, SessionMessage, Topic, TopicStatus
-from app.schemas import SessionCreate, SessionDetail, SessionSubmitRequest, SessionSubmitResult
+from app.schemas import ExecutionResult, SessionCreate, SessionDetail, SessionSubmitRequest, SessionSubmitResult
 from app.services import budget, grading, knowledge_graph, methods, monitor_agent, research
+from app.services.research import is_module_unlocked
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -40,6 +41,13 @@ def start_session(payload: SessionCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Module not found")
     if module.status == ModuleStatus.pending:
         raise HTTPException(status_code=409, detail="Module hasn't been researched yet")
+    if not is_module_unlocked(module):
+        raise HTTPException(status_code=409, detail="Complete earlier modules first")
+    if not module.quiz_passed:
+        raise HTTPException(
+            status_code=409,
+            detail="Pass this module's quiz first — practice sessions unlock after the diagnostic quiz.",
+        )
 
     method = payload.method or methods.select_method(db, module)
     if module.status == ModuleStatus.researched:
@@ -84,7 +92,7 @@ def submit_response(session_id: int, payload: SessionSubmitRequest, db: Session 
         db.commit()
         return SessionSubmitResult(session_id=session.id, completed=False, feedback="", next_prompt=followup)
 
-    score, feedback = grading.grade_session(module, method, transcript, payload.response)
+    score, feedback, execution_result = grading.grade_session(module, method, transcript, payload.response)
     session.completed_at = datetime.now(timezone.utc)
     session.score = score
     session.outcome_summary = feedback[:500]
@@ -110,4 +118,15 @@ def submit_response(session_id: int, payload: SessionSubmitRequest, db: Session 
         except budget.BudgetExceeded:
             pass  # non-critical; skip if the topic's budget is exhausted
 
-    return SessionSubmitResult(session_id=session.id, completed=True, feedback=feedback, score=score)
+    execution = (
+        ExecutionResult(
+            stdout=execution_result.stdout,
+            stderr=execution_result.stderr,
+            return_code=execution_result.return_code,
+            timed_out=execution_result.timed_out,
+            network_sandboxed=execution_result.network_sandboxed,
+        )
+        if execution_result is not None
+        else None
+    )
+    return SessionSubmitResult(session_id=session.id, completed=True, feedback=feedback, score=score, execution=execution)

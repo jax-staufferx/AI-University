@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.database import Base, engine
-from app.routers import modules, monitor, sessions, topics
+from app.routers import modules, monitor, programs, sessions, topics
 
 app = FastAPI(
     title="Personal Learning Agent",
@@ -46,6 +46,7 @@ app.include_router(topics.router, prefix="/api")
 app.include_router(modules.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(monitor.router, prefix="/api")
+app.include_router(programs.router, prefix="/api")
 
 
 @app.get("/")

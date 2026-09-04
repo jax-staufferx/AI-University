@@ -1,10 +1,11 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.config import DATA_DIR
 from app.database import get_db
-from app.models import FormatTier, Module, ModuleStatus, Topic, TopicStatus
+from app.models import FormatTier, GraphEdge, Module, ModuleStatus, Topic, TopicStatus
 from app.schemas import (
     BudgetContinueRequest,
     ModuleSummary,
@@ -12,6 +13,7 @@ from app.schemas import (
     TopicCreate,
     TopicDetail,
     TopicListItem,
+    TopicMoveRequest,
 )
 from app.services import budget, research
 
@@ -46,26 +48,43 @@ def _topic_detail(db: Session, topic: Topic) -> TopicDetail:
         .order_by(Module.order_index)
         .first()
     )
+    cap_hit = b.call_count >= b.soft_cap * (1 + b.cap_acknowledgments)
+    modules_total = len(topic.modules)
+    modules_researched = sum(1 for m in topic.modules if m.digest_path is not None)
     return TopicDetail(
         id=topic.id,
         title=topic.title,
         format_tier=topic.format_tier,
+        depth=topic.depth,
         status=topic.status,
+        program_id=topic.program_id,
         created_at=topic.created_at,
         completed_at=topic.completed_at,
         digest_path=topic.digest_path,
         outline_approved=topic.outline_approved,
         current_module_id=current_module.id if current_module else None,
         modules=[ModuleSummary.model_validate(m) for m in topic.modules],
+        modules_total=modules_total,
+        modules_researched=modules_researched,
+        research_in_progress=(
+            modules_total > 0 and modules_researched < modules_total and not cap_hit and not topic.research_error
+        ),
+        research_error=topic.research_error,
         budget_used=b.call_count,
         budget_soft_cap=b.soft_cap,
-        budget_cap_hit=b.call_count >= b.soft_cap * (1 + b.cap_acknowledgments),
+        budget_cap_hit=cap_hit,
     )
 
 
 @router.post("", response_model=TopicDetail)
 def create_topic(payload: TopicCreate, db: Session = Depends(get_db)):
-    topic = Topic(title=payload.title, format_tier=payload.format_tier, status=TopicStatus.planning)
+    topic = Topic(
+        title=payload.title,
+        format_tier=payload.format_tier,
+        depth=payload.depth,
+        program_id=payload.program_id,
+        status=TopicStatus.planning,
+    )
     db.add(topic)
     db.commit()
     db.refresh(topic)
@@ -92,6 +111,19 @@ def get_topic(topic_id: int, db: Session = Depends(get_db)):
     return _topic_detail(db, topic)
 
 
+@router.post("/{topic_id}/move", response_model=TopicDetail)
+def move_topic(topic_id: int, payload: TopicMoveRequest, db: Session = Depends(get_db)):
+    from app.models import Program
+
+    topic = _get_topic_or_404(db, topic_id)
+    if payload.program_id is not None and db.get(Program, payload.program_id) is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    topic.program_id = payload.program_id
+    db.commit()
+    db.refresh(topic)
+    return _topic_detail(db, topic)
+
+
 @router.get("/{topic_id}/outline")
 def get_proposed_outline(topic_id: int, db: Session = Depends(get_db)):
     topic = _get_topic_or_404(db, topic_id)
@@ -103,7 +135,9 @@ def get_proposed_outline(topic_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{topic_id}/outline/approve", response_model=TopicDetail)
-def approve_outline(topic_id: int, payload: OutlineApproveRequest, db: Session = Depends(get_db)):
+def approve_outline(
+    topic_id: int, payload: OutlineApproveRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
+):
     topic = _get_topic_or_404(db, topic_id)
     if topic.format_tier not in (FormatTier.short_course, FormatTier.full_course):
         raise HTTPException(status_code=400, detail="Only short_course/full_course topics have an outline")
@@ -123,35 +157,58 @@ def approve_outline(topic_id: int, payload: OutlineApproveRequest, db: Session =
             for m in sorted(payload.modules, key=lambda m: m.order_index)
         ]
 
-    try:
-        research.approve_outline(db, topic, modules_override)
-    except budget.BudgetExceeded as e:
-        raise _budget_error(e)
+    research.approve_outline(db, topic, modules_override)
+    # Researching every module can take minutes for a full course — runs after this response
+    # goes out. Poll GET /topics/{id} for modules_researched / modules_total to show progress.
+    background_tasks.add_task(research.research_all_modules_background, topic.id)
 
     db.refresh(topic)
     return _topic_detail(db, topic)
 
 
 @router.post("/{topic_id}/budget/continue", response_model=TopicDetail)
-def continue_past_budget(topic_id: int, payload: BudgetContinueRequest, db: Session = Depends(get_db)):
+def continue_past_budget(
+    topic_id: int, payload: BudgetContinueRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
+):
     topic = _get_topic_or_404(db, topic_id)
     if not payload.continue_anyway:
         raise HTTPException(status_code=400, detail="continue_anyway must be true to proceed")
 
     budget.acknowledge_and_continue(db, topic_id)
-    try:
-        research.resume_pending_research(db, topic)
-    except budget.BudgetExceeded as e:
-        raise _budget_error(e)
+
+    has_pending_modules = topic.outline_approved and any(m.digest_path is None for m in topic.modules)
+    if has_pending_modules:
+        background_tasks.add_task(research.research_all_modules_background, topic.id)
+    else:
+        try:
+            research.resume_pending_research(db, topic)
+        except budget.BudgetExceeded as e:
+            raise _budget_error(e)
 
     db.refresh(topic)
     return _topic_detail(db, topic)
 
 
+@router.delete("/{topic_id}", status_code=204)
+def delete_topic(topic_id: int, db: Session = Depends(get_db)):
+    topic = _get_topic_or_404(db, topic_id)
+
+    digest_paths = {topic.digest_path} | {m.digest_path for m in topic.modules}
+    digest_paths.discard(None)
+
+    db.query(GraphEdge).filter((GraphEdge.topic_id_a == topic_id) | (GraphEdge.topic_id_b == topic_id)).delete(
+        synchronize_session=False
+    )
+    db.delete(topic)  # cascades to modules -> sessions -> session_messages, and to budget_tracking
+    db.commit()
+
+    for rel_path in digest_paths:
+        path = DATA_DIR / rel_path
+        path.unlink(missing_ok=True)
+
+
 @router.get("/{topic_id}/connections")
 def get_topic_connections(topic_id: int, db: Session = Depends(get_db)):
-    from app.models import GraphEdge
-
     _get_topic_or_404(db, topic_id)
     edges = (
         db.query(GraphEdge)
