@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { getModule, startSession } from '../api';
 import type { ModuleDetail } from '../types';
 import { METHOD_INFO } from '../constants';
@@ -58,7 +58,7 @@ export default function ModuleView() {
     return (
       <div className="module-view">
         <div className="page-header">
-          <Link to={`/topics/${tid}`} className="btn btn-secondary">Back to Topic</Link>
+          <button onClick={() => navigate(`/topics/${tid}`)} className="btn btn-secondary">Back to Topic</button>
         </div>
         <LoadingState
           messages={['This module is being researched...', 'Reading through sources...', 'Compiling the digest...']}
@@ -71,7 +71,7 @@ export default function ModuleView() {
   return (
     <div className="module-view">
       <div className="page-header">
-        <Link to={`/topics/${tid}`} className="btn btn-secondary">Back to Topic</Link>
+        <button onClick={() => navigate(`/topics/${tid}`)} className="btn btn-secondary">Back to Topic</button>
       </div>
 
       <article className="reading-article">
