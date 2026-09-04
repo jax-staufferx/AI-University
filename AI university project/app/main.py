@@ -1,7 +1,7 @@
 import anthropic
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.database import Base, engine
 from app.routers import modules, monitor, sessions, topics
@@ -46,6 +46,11 @@ app.include_router(topics.router)
 app.include_router(modules.router)
 app.include_router(sessions.router)
 app.include_router(monitor.router)
+
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health")
