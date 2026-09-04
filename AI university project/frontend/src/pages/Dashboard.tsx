@@ -28,7 +28,8 @@ export default function Dashboard() {
     setNavigating(topicId);
     try {
       const detail = await getTopic(topicId);
-      if (!detail.outline_approved && detail.modules.length > 0) {
+      const hasOutline = detail.format_tier === 'short_course' || detail.format_tier === 'full_course';
+      if (hasOutline && !detail.outline_approved) {
         navigate(`/topics/${topicId}/outline`);
       } else if (detail.current_module_id) {
         navigate(`/topics/${topicId}/modules/${detail.current_module_id}`);
