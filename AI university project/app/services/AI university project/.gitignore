@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Personal data: DB, research digests, session content
+data/*.db
+data/*.db-journal
+data/digests/*
+!data/digests/.gitkeep
