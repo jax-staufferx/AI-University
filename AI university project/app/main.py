@@ -42,10 +42,10 @@ def handle_anthropic_api_error(request: Request, exc: anthropic.APIError):
     return JSONResponse(status_code=502, content={"detail": f"Anthropic API error: {exc.message}"})
 
 
-app.include_router(topics.router)
-app.include_router(modules.router)
-app.include_router(sessions.router)
-app.include_router(monitor.router)
+app.include_router(topics.router, prefix="/api")
+app.include_router(modules.router, prefix="/api")
+app.include_router(sessions.router, prefix="/api")
+app.include_router(monitor.router, prefix="/api")
 
 
 @app.get("/")
