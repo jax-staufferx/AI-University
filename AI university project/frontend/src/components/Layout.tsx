@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTheme } from '../theme';
-import { listProposals } from '../api';
+import { authLogout, listProposals } from '../api';
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { theme, toggleTheme, textSize, setTextSize } = useTheme();
@@ -13,6 +13,10 @@ export default function Layout({ children }: { children: ReactNode }) {
       .then((p) => setPendingCount(p.length))
       .catch(() => {});
   }, [location.pathname]);
+
+  const handleLogout = () => {
+    authLogout().finally(() => window.location.reload());
+  };
 
   return (
     <div className="app-shell">
@@ -53,6 +57,9 @@ export default function Layout({ children }: { children: ReactNode }) {
               aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
             >
               {theme === 'light' ? '☾' : '☀'}
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
+              Log Out
             </button>
           </nav>
         </div>

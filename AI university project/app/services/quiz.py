@@ -17,9 +17,9 @@ from app.models import Module
 from app.schemas import QuizAnswer, QuizOut, QuizQuestionOut, QuizQuestionResult, QuizSubmitResult
 from app.services import anthropic_client as ai
 from app.services import budget
-from app.services.research import _DEPTH_INSTRUCTIONS, read_digest
+from app.services.research import _DEPTH_INSTRUCTIONS, _learner_context_block, read_digest
 
-QUIZ_PASS_THRESHOLD = 0.7
+QUIZ_PASS_THRESHOLD = 0.2
 
 _DIFFICULTY_RUBRIC = (
     "Difficulty is 1-10, assigned per question:\n"
@@ -114,7 +114,7 @@ def generate_quiz(db: Session, module: Module) -> None:
             f"Module: {module.title} — {module.one_liner}\n\nDigest:\n{digest}\n\n"
             "Write 6-9 questions covering this digest's core points, spanning the full "
             "difficulty range — don't make them all easy or all hard. Each multiple_choice "
-            "question needs exactly 4 options."
+            "question needs exactly 4 options." + _learner_context_block(module.topic)
         ),
         schema=_QUIZ_GENERATION_SCHEMA,
         max_tokens=4000,
@@ -219,9 +219,8 @@ def grade_quiz(db: Session, module: Module, answers: list[QuizAnswer]) -> QuizSu
 
     if passed and not module.quiz_passed:
         module.quiz_passed = True
-        db.commit()
 
-    return QuizSubmitResult(
+    submit_result = QuizSubmitResult(
         module_id=module.id,
         passed=passed,
         weighted_score=round(weighted_score, 3),
@@ -229,3 +228,13 @@ def grade_quiz(db: Session, module: Module, answers: list[QuizAnswer]) -> QuizSu
         results=[results[q["id"]] for q in stored],
         slideshow_ready=module.quiz_passed,
     )
+    module.quiz_last_result_json = submit_result.model_dump_json()
+    db.commit()
+
+    return submit_result
+
+
+def get_last_quiz_result(module: Module) -> QuizSubmitResult | None:
+    if not module.quiz_last_result_json:
+        return None
+    return QuizSubmitResult.model_validate_json(module.quiz_last_result_json)

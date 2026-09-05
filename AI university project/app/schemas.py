@@ -6,6 +6,19 @@ from pydantic import BaseModel, ConfigDict
 from app.models import ContentDepth, ContentType, FormatTier, LearningMethod, ModuleStatus, ProposalStatus, TopicStatus
 
 # ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+class AuthStatus(BaseModel):
+    authenticated: bool
+
+
+# ---------------------------------------------------------------------------
 # Programs (optional folders grouping several topics)
 # ---------------------------------------------------------------------------
 
@@ -43,6 +56,16 @@ class TopicCreate(BaseModel):
     format_tier: FormatTier
     depth: ContentDepth = ContentDepth.intermediate
     program_id: int | None = None
+    learner_context: str | None = None
+
+
+class IntakeQuestionsRequest(BaseModel):
+    title: str
+    format_tier: FormatTier
+
+
+class IntakeQuestionsResponse(BaseModel):
+    questions: list[str]
 
 
 class TopicListItem(BaseModel):
@@ -66,6 +89,12 @@ class ModuleSummary(BaseModel):
     title: str
     one_liner: str | None = None
     status: ModuleStatus
+    unlocked: bool = True
+    has_quiz: bool = False
+    quiz_passed: bool = False
+    quiz_score: float | None = None
+    sessions_count: int = 0
+    best_session_score: int | None = None
 
 
 class TopicDetail(BaseModel):

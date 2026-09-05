@@ -8,6 +8,8 @@ from app.database import get_db
 from app.models import FormatTier, GraphEdge, Module, ModuleStatus, Topic, TopicStatus
 from app.schemas import (
     BudgetContinueRequest,
+    IntakeQuestionsRequest,
+    IntakeQuestionsResponse,
     ModuleSummary,
     OutlineApproveRequest,
     TopicCreate,
@@ -40,6 +42,26 @@ def _budget_error(e: budget.BudgetExceeded) -> HTTPException:
     )
 
 
+def _module_summary(module: Module) -> ModuleSummary:
+    quiz_score = None
+    if module.quiz_last_result_json:
+        quiz_score = json.loads(module.quiz_last_result_json).get("weighted_score")
+    scored_sessions = [s.score for s in module.sessions if s.score is not None]
+    return ModuleSummary(
+        id=module.id,
+        order_index=module.order_index,
+        title=module.title,
+        one_liner=module.one_liner,
+        status=module.status,
+        unlocked=research.is_module_unlocked(module),
+        has_quiz=module.quiz_json is not None,
+        quiz_passed=module.quiz_passed,
+        quiz_score=quiz_score,
+        sessions_count=len(module.sessions),
+        best_session_score=max(scored_sessions, default=None),
+    )
+
+
 def _topic_detail(db: Session, topic: Topic) -> TopicDetail:
     b = budget.get_or_create(db, topic.id)
     current_module = (
@@ -63,7 +85,7 @@ def _topic_detail(db: Session, topic: Topic) -> TopicDetail:
         digest_path=topic.digest_path,
         outline_approved=topic.outline_approved,
         current_module_id=current_module.id if current_module else None,
-        modules=[ModuleSummary.model_validate(m) for m in topic.modules],
+        modules=[_module_summary(m) for m in topic.modules],
         modules_total=modules_total,
         modules_researched=modules_researched,
         research_in_progress=(
@@ -76,6 +98,12 @@ def _topic_detail(db: Session, topic: Topic) -> TopicDetail:
     )
 
 
+@router.post("/intake-questions", response_model=IntakeQuestionsResponse)
+def get_intake_questions(payload: IntakeQuestionsRequest):
+    questions = research.generate_intake_questions(payload.title, payload.format_tier)
+    return IntakeQuestionsResponse(questions=questions)
+
+
 @router.post("", response_model=TopicDetail)
 def create_topic(payload: TopicCreate, db: Session = Depends(get_db)):
     topic = Topic(
@@ -83,6 +111,7 @@ def create_topic(payload: TopicCreate, db: Session = Depends(get_db)):
         format_tier=payload.format_tier,
         depth=payload.depth,
         program_id=payload.program_id,
+        learner_context=payload.learner_context,
         status=TopicStatus.planning,
     )
     db.add(topic)
@@ -94,6 +123,12 @@ def create_topic(payload: TopicCreate, db: Session = Depends(get_db)):
         research.kickoff(db, topic)
     except budget.BudgetExceeded as e:
         raise _budget_error(e)
+    except Exception as e:
+        # Nothing usable was produced (no digest, no modules) — don't leave a dead
+        # "planning" topic behind with no explanation and no way to retry.
+        db.delete(topic)
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Research failed, so this topic wasn't created: {e}")
 
     db.refresh(topic)
     return _topic_detail(db, topic)
@@ -184,6 +219,12 @@ def continue_past_budget(
             research.resume_pending_research(db, topic)
         except budget.BudgetExceeded as e:
             raise _budget_error(e)
+        except Exception as e:
+            # Unlike a fresh create, this topic may already have real progress — record the
+            # error instead of deleting anything, same as the background course-research path.
+            topic.research_error = str(e)[:2000]
+            db.commit()
+            raise HTTPException(status_code=502, detail=f"Research failed: {e}")
 
     db.refresh(topic)
     return _topic_detail(db, topic)

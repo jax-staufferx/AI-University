@@ -6,6 +6,10 @@ import type {
 
 const BASE = '/api';
 
+export interface AuthStatus {
+  authenticated: boolean;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -30,6 +34,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   return res.json();
 }
+
+// Auth
+export const authStatus = () => request<AuthStatus>('/auth/status');
+export const authLogin = (password: string) =>
+  request<AuthStatus>('/auth/login', { method: 'POST', body: JSON.stringify({ password }) });
+export const authLogout = () => request<AuthStatus>('/auth/logout', { method: 'POST' });
 
 // Topics
 export const listTopics = () => request<TopicListItem[]>('/topics');
