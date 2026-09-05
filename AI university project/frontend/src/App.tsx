@@ -5,6 +5,7 @@ import CreateTopic from './pages/CreateTopic';
 import OutlineApproval from './pages/OutlineApproval';
 import TopicView from './pages/TopicView';
 import ModuleView from './pages/ModuleView';
+import QuizView from './pages/QuizView';
 import SessionView from './pages/SessionView';
 import Insights from './pages/Insights';
 
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/topics/:topicId" element={<TopicView />} />
         <Route path="/topics/:topicId/outline" element={<OutlineApproval />} />
         <Route path="/topics/:topicId/modules/:moduleId" element={<ModuleView />} />
+        <Route path="/topics/:topicId/modules/:moduleId/quiz" element={<QuizView />} />
         <Route path="/topics/:topicId/modules/:moduleId/session/:sessionId" element={<SessionView />} />
         <Route path="/insights" element={<Insights />} />
         <Route path="*" element={<Navigate to="/" replace />} />

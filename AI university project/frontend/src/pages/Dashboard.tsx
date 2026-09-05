@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { listTopics, getTopic } from '../api';
+import { listTopics, getTopic, deleteTopic } from '../api';
 import type { TopicListItem } from '../types';
 import { FORMAT_TIER_LABELS, TOPIC_STATUS_LABELS } from '../constants';
 import LoadingState from '../components/LoadingState';
@@ -11,6 +11,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [navigating, setNavigating] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const navigate = useNavigate();
 
   const load = () => {
@@ -23,6 +24,21 @@ export default function Dashboard() {
   };
 
   useEffect(load, []);
+
+  const handleDelete = async (topic: TopicListItem) => {
+    if (!window.confirm(`Delete "${topic.title}"? This removes its research, quizzes, and session history for good.`)) {
+      return;
+    }
+    setDeletingId(topic.id);
+    try {
+      await deleteTopic(topic.id);
+      setTopics((prev) => prev.filter((t) => t.id !== topic.id));
+    } catch {
+      setError(true);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const handleCardClick = async (topicId: number) => {
     setNavigating(topicId);
@@ -90,7 +106,13 @@ export default function Dashboard() {
 
       <section className="topic-list" aria-label="Active topics">
         {active.map((topic) => (
-          <TopicCard key={topic.id} topic={topic} onClick={() => handleCardClick(topic.id)} />
+          <TopicCard
+            key={topic.id}
+            topic={topic}
+            onClick={() => handleCardClick(topic.id)}
+            onDelete={() => handleDelete(topic)}
+            deleting={deletingId === topic.id}
+          />
         ))}
       </section>
 
@@ -99,7 +121,13 @@ export default function Dashboard() {
           <h2 className="section-divider">Completed</h2>
           <section className="topic-list completed-list" aria-label="Completed topics">
             {completed.map((topic) => (
-              <TopicCard key={topic.id} topic={topic} onClick={() => handleCardClick(topic.id)} />
+              <TopicCard
+                key={topic.id}
+                topic={topic}
+                onClick={() => handleCardClick(topic.id)}
+                onDelete={() => handleDelete(topic)}
+                deleting={deletingId === topic.id}
+              />
             ))}
           </section>
         </>
@@ -108,23 +136,37 @@ export default function Dashboard() {
   );
 }
 
-function TopicCard({ topic, onClick }: { topic: TopicListItem; onClick: () => void }) {
+function TopicCard({
+  topic, onClick, onDelete, deleting,
+}: {
+  topic: TopicListItem; onClick: () => void; onDelete: () => void; deleting: boolean;
+}) {
   return (
-    <button className="topic-card" onClick={onClick}>
-      <div className="topic-card-header">
-        <span className="topic-card-title">{topic.title}</span>
-        <span className="topic-card-tier">{FORMAT_TIER_LABELS[topic.format_tier]}</span>
-      </div>
-      <div className="topic-card-footer">
-        <span className={`topic-status status-${topic.status}`}>
-          {TOPIC_STATUS_LABELS[topic.status]}
-        </span>
-        {topic.completed_at && (
-          <span className="topic-completed-date">
-            {new Date(topic.completed_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+    <div className="topic-card">
+      <button className="topic-card-main" onClick={onClick}>
+        <div className="topic-card-header">
+          <span className="topic-card-title">{topic.title}</span>
+          <span className="topic-card-tier">{FORMAT_TIER_LABELS[topic.format_tier]}</span>
+        </div>
+        <div className="topic-card-footer">
+          <span className={`topic-status status-${topic.status}`}>
+            {TOPIC_STATUS_LABELS[topic.status]}
           </span>
-        )}
-      </div>
-    </button>
+          {topic.completed_at && (
+            <span className="topic-completed-date">
+              {new Date(topic.completed_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+            </span>
+          )}
+        </div>
+      </button>
+      <button
+        className="icon-btn icon-btn-danger topic-delete-btn"
+        onClick={(e) => { e.stopPropagation(); onDelete(); }}
+        disabled={deleting}
+        aria-label={`Delete topic: ${topic.title}`}
+      >
+        {deleting ? '…' : '×'}
+      </button>
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { getModule, startSession } from '../api';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { getModule, startSession, deleteModule } from '../api';
 import type { ModuleDetail } from '../types';
 import { METHOD_INFO } from '../constants';
 import MarkdownRenderer from '../components/MarkdownRenderer';
@@ -18,13 +18,19 @@ export default function ModuleView() {
   const [starting, setStarting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
+  const [deleting, setDeleting] = useState(false);
 
   const load = () => {
     setLoading(true);
     setError(false);
+    setErrorMessage(undefined);
     getModule(tid, mid)
       .then(setModule)
-      .catch(() => setError(true))
+      .catch((err) => {
+        setErrorMessage(err instanceof Error ? err.message : undefined);
+        setError(true);
+      })
       .finally(() => setLoading(false));
   };
 
@@ -32,26 +38,63 @@ export default function ModuleView() {
 
   const handleStartSession = async (method?: string) => {
     setStarting(true);
+    setErrorMessage(undefined);
     try {
       const session = await startSession(mid, method);
       navigate(`/topics/${tid}/modules/${mid}/session/${session.id}`);
-    } catch {
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : undefined);
       setError(true);
       setStarting(false);
     }
   };
 
-  if (loading || starting) {
+  const handleDelete = async () => {
+    if (!module) return;
+    if (!window.confirm(`Delete "${module.title}"? This removes its digest, quiz, and session history for good.`)) {
+      return;
+    }
+    setDeleting(true);
+    setErrorMessage(undefined);
+    try {
+      await deleteModule(tid, mid);
+      navigate(`/topics/${tid}`);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : undefined);
+      setError(true);
+      setDeleting(false);
+    }
+  };
+
+  if (loading || starting || deleting) {
     return (
       <LoadingState
-        messages={starting ? ['Starting your session...', 'Preparing the exercise...'] : ['Loading module...']}
-        ariaLabel={starting ? 'Starting session' : 'Loading module'}
+        messages={
+          deleting ? ['Deleting module...']
+          : starting ? ['Starting your session...', 'Preparing the exercise...']
+          : ['Loading module...']
+        }
+        ariaLabel={deleting ? 'Deleting module' : starting ? 'Starting session' : 'Loading module'}
       />
     );
   }
 
   if (error || !module) {
-    return <ErrorState onRetry={load} />;
+    return <ErrorState message={errorMessage} onRetry={load} />;
+  }
+
+  if (!module.unlocked) {
+    return (
+      <div className="module-view">
+        <div className="page-header">
+          <button onClick={() => navigate(`/topics/${tid}`)} className="btn btn-secondary">Back to Topic</button>
+        </div>
+        <div className="empty-state">
+          <h1 className="empty-title">Locked</h1>
+          <p className="empty-body">Complete the earlier modules in this topic first to unlock this one.</p>
+        </div>
+      </div>
+    );
   }
 
   if (module.status === 'pending') {
@@ -72,6 +115,7 @@ export default function ModuleView() {
     <div className="module-view">
       <div className="page-header">
         <button onClick={() => navigate(`/topics/${tid}`)} className="btn btn-secondary">Back to Topic</button>
+        <button onClick={handleDelete} className="btn btn-secondary btn-danger">Delete Module</button>
       </div>
 
       <article className="reading-article">
@@ -99,12 +143,14 @@ export default function ModuleView() {
           {showHistory && (
             <ul className="history-list">
               {module.sessions.map((s) => (
-                <li key={s.id} className="history-item">
-                  <span className="history-method">{METHOD_INFO[s.method_used].label}</span>
-                  <span className="history-score">{s.score !== null ? `${s.score}/100` : 'In progress'}</span>
-                  <span className="history-date">
-                    {new Date(s.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                  </span>
+                <li key={s.id}>
+                  <Link to={`/topics/${tid}/modules/${mid}/session/${s.id}`} className="history-item">
+                    <span className="history-method">{METHOD_INFO[s.method_used].label}</span>
+                    <span className="history-score">{s.score !== null ? `${s.score}/100` : 'In progress'}</span>
+                    <span className="history-date">
+                      {new Date(s.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    </span>
+                  </Link>
                 </li>
               ))}
             </ul>
@@ -112,37 +158,46 @@ export default function ModuleView() {
         </section>
       )}
 
-      <div className="module-cta">
-        {showAdvanced && (
-          <div className="advanced-methods">
-            <p className="advanced-label">Choose an exercise method (optional — otherwise we pick for you):</p>
-            <div className="method-grid">
-              {Object.entries(METHOD_INFO).map(([key, info]) => (
-                <button
-                  key={key}
-                  className="method-pick-btn"
-                  onClick={() => handleStartSession(key)}
-                >
-                  <span className="method-pick-name">{info.label}</span>
-                  <span className="method-pick-desc">{info.description}</span>
-                </button>
-              ))}
+      {module.has_quiz && !module.quiz_passed ? (
+        <div className="module-cta">
+          <p className="empty-inline">Pass the diagnostic quiz to unlock practice sessions for this module.</p>
+          <Link to={`/topics/${tid}/modules/${mid}/quiz`} className="btn btn-primary btn-lg">
+            Take Diagnostic Quiz
+          </Link>
+        </div>
+      ) : (
+        <div className="module-cta">
+          {showAdvanced && (
+            <div className="advanced-methods">
+              <p className="advanced-label">Choose an exercise method (optional — otherwise we pick for you):</p>
+              <div className="method-grid">
+                {Object.entries(METHOD_INFO).map(([key, info]) => (
+                  <button
+                    key={key}
+                    className="method-pick-btn"
+                    onClick={() => handleStartSession(key)}
+                  >
+                    <span className="method-pick-name">{info.label}</span>
+                    <span className="method-pick-desc">{info.description}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-        <button
-          className="btn btn-link"
-          onClick={() => setShowAdvanced(!showAdvanced)}
-        >
-          {showAdvanced ? 'Hide options' : 'Advanced: choose method'}
-        </button>
-        <button
-          className="btn btn-primary btn-lg"
-          onClick={() => handleStartSession()}
-        >
-          Start Learning Session
-        </button>
-      </div>
+          )}
+          <button
+            className="btn btn-link"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+          >
+            {showAdvanced ? 'Hide options' : 'Advanced: choose method'}
+          </button>
+          <button
+            className="btn btn-primary btn-lg"
+            onClick={() => handleStartSession()}
+          >
+            Start Learning Session
+          </button>
+        </div>
+      )}
     </div>
   );
 }

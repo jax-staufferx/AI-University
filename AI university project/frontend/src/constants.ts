@@ -1,5 +1,5 @@
 import type {
-  ContentType, FormatTier, LearningMethod, ModuleStatus, TopicStatus,
+  ContentDepth, ContentType, FormatTier, LearningMethod, ModuleStatus, TopicStatus,
 } from './types';
 
 export const FORMAT_TIER_LABELS: Record<FormatTier, string> = {
@@ -14,6 +14,18 @@ export const FORMAT_TIER_DESCRIPTIONS: Record<FormatTier, string> = {
   deep_dive: 'A weekend. Deeper research, split across a few sessions with practice rounds in between.',
   short_course: 'About a week. 4–5 modules, researched one at a time as you go.',
   full_course: '2–3 weeks. A full curriculum with real prerequisite ordering, built and researched module by module.',
+};
+
+export const CONTENT_DEPTH_LABELS: Record<ContentDepth, string> = {
+  beginner: 'Beginner',
+  intermediate: 'Intermediate',
+  advanced: 'Advanced',
+};
+
+export const CONTENT_DEPTH_DESCRIPTIONS: Record<ContentDepth, string> = {
+  beginner: 'Zero background assumed. Every term defined, intuition and examples over precision — fine to skip edge cases.',
+  intermediate: 'Comfortable with moderate complexity. Real mechanics, not just surface intuition, without chasing every edge case.',
+  advanced: 'Real technical depth and field-standard terminology. Engages with edge cases and nuance that actually matter.',
 };
 
 export const TOPIC_STATUS_LABELS: Record<TopicStatus, string> = {
