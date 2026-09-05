@@ -5,15 +5,17 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
+    port: 5180,
+    strictPort: true,
     allowedHosts: true,
     proxy: {
       '/api': {
-        target: 'http://api:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
-      '/health': 'http://api:8000',
-      '/docs': 'http://api:8000',
-      '/openapi.json': 'http://api:8000',
+      '/health': 'http://127.0.0.1:8000',
+      '/docs': 'http://127.0.0.1:8000',
+      '/openapi.json': 'http://127.0.0.1:8000',
     },
   },
 });

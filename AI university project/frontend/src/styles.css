@@ -578,6 +578,20 @@ legend { padding: 0; margin-bottom: 0.75rem; }
 .proposal-actions { display: flex; gap: 0.5rem; }
 
 /* ============================================================
+   Login gate
+   ============================================================ */
+.login-gate {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem; background: var(--bg);
+}
+.login-form {
+  width: 100%; max-width: 22rem; padding: 2rem; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.login-form .page-title { margin-bottom: 1.5rem; text-align: center; }
+.login-form .btn { width: 100%; margin-top: 0.5rem; }
+
+/* ============================================================
    Progress bar
    ============================================================ */
 .progress-bar { margin-bottom: 1rem; }

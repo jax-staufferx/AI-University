@@ -94,6 +94,10 @@ class Topic(Base):
     title: Mapped[str] = mapped_column(String(500))
     format_tier: Mapped[FormatTier] = mapped_column(Enum(FormatTier))
     depth: Mapped[ContentDepth] = mapped_column(Enum(ContentDepth), default=ContentDepth.intermediate)
+    # Free-text answers from the pre-research intake questionnaire (why they're learning this,
+    # what to focus on/skip, plus 1-2 AI-generated topic-specific questions) — woven into every
+    # research/outline/quiz prompt alongside depth, so scope reflects intent, not just detail level.
+    learner_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[TopicStatus] = mapped_column(Enum(TopicStatus), default=TopicStatus.planning)
     program_id: Mapped[int | None] = mapped_column(ForeignKey("programs.id"), nullable=True)
     program: Mapped["Program | None"] = relationship("Program", back_populates="topics")
@@ -139,6 +143,10 @@ class Module(Base):
     # active-recall sessions (the 8 methods) unlock for this module.
     quiz_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     quiz_passed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Full result (score, per-question right/wrong, explanations) from the most recent grading
+    # pass, kept around so the learner can come back and review it later instead of it being
+    # gone the moment they navigate away from the submit response.
+    quiz_last_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Adaptive lesson generated only after the quiz is passed, weighted toward
     # whatever the quiz showed the learner is shakiest on.
     slideshow_json: Mapped[str | None] = mapped_column(Text, nullable=True)

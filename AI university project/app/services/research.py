@@ -102,6 +102,56 @@ def _dive_system_prompt(pace: str, content_depth: ContentDepth) -> str:
     )
 
 
+def _learner_context_block(topic: Topic) -> str:
+    """Free-text answers from the pre-research intake questionnaire, if the learner filled
+    one in. Woven into research/outline/quiz prompts alongside the depth instruction — depth
+    controls how much detail, this controls what angle and scope actually matter to them."""
+    if not topic.learner_context:
+        return ""
+    return (
+        "\n\nWhat the learner told us before research started, about why they're learning this "
+        f"and what they want covered:\n{topic.learner_context}\n"
+        "Take this into account for scope and emphasis — don't ignore it in favor of generic coverage."
+    )
+
+
+_INTAKE_QUESTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "1-2 short clarifying questions specific to this exact topic.",
+        }
+    },
+    "required": ["questions"],
+    "additionalProperties": False,
+}
+
+
+def generate_intake_questions(title: str, format_tier: FormatTier) -> list[str]:
+    """A fast, no-search call made before a topic exists — proposes 1-2 questions specific
+    enough to this exact title that the answer would actually change what the research
+    focuses on. Not budget-tracked: fixed-cost, one-time, and there's no topic_id yet to
+    track it against."""
+    result = ai.structured_call(
+        system=(
+            "You help scope a self-directed learning topic before any research happens. Given "
+            "a topic title and format, propose 1-2 short clarifying questions whose answers "
+            "would meaningfully change what the research should focus on, or how much of it "
+            "matters — not generic questions like 'how much do you already know' or 'how much "
+            "time do you have', which are asked separately. If the topic is narrow enough that "
+            "no clarifying question would actually change anything, return an empty list rather "
+            "than inventing a question for its own sake."
+        ),
+        user_prompt=f"Topic: '{title}'. Format: {format_tier.value}.",
+        schema=_INTAKE_QUESTIONS_SCHEMA,
+        max_tokens=500,
+        effort="medium",
+    )
+    return [q for q in (result.get("questions") or []) if q][:2]
+
+
 def kickoff(db: Session, topic: Topic) -> None:
     """Starts whatever research step a freshly created topic needs first."""
     if topic.format_tier == FormatTier.quick_dive:
@@ -134,7 +184,7 @@ def run_quick_dive(db: Session, topic: Topic) -> None:
             f"Research the topic '{topic.title}' broadly enough for someone to get a working "
             "understanding in one sitting. Cover: what it is, why it matters, the core concepts "
             "in the order they should be learned, common misconceptions, and one or two worked "
-            "examples."
+            "examples." + _learner_context_block(topic)
         ),
         max_tokens=8000,
         effort="medium",
@@ -170,7 +220,7 @@ def run_deep_dive(db: Session, topic: Topic) -> None:
             f"Research the topic '{topic.title}' thoroughly enough for a weekend of focused study. "
             "Cover foundational concepts through to practical application, with enough depth that "
             "someone could hold their own in a conversation with a practitioner afterward. Include "
-            "worked examples and note where hands-on practice would help."
+            "worked examples and note where hands-on practice would help." + _learner_context_block(topic)
         ),
         max_tokens=16000,
         effort="high",
@@ -323,6 +373,7 @@ def generate_outline(db: Session, topic: Topic) -> list[dict]:
             "(2) the core pillars ranked must-know vs nice-to-know, (3) real prerequisite "
             "relationships between the pillars. Write up your findings as notes — this will be "
             "turned into a module list next, so be concrete about ordering and dependencies."
+            + _learner_context_block(topic)
         ),
         max_tokens=10000,
         effort="high",
@@ -460,6 +511,7 @@ def research_module(db: Session, topic: Topic, module: Module) -> None:
             f"Content type: {module.content_type.value}."
             f"{context_block}\n\n"
             "Research and write a teaching digest for this module specifically."
+            + _learner_context_block(topic)
         ),
         max_tokens=9000,
         effort="medium",

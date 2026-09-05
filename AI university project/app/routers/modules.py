@@ -83,6 +83,15 @@ def get_quiz(topic_id: int, module_id: int, db: Session = Depends(get_db)):
     return quiz.get_quiz_for_frontend(module)
 
 
+@router.get("/{topic_id}/modules/{module_id}/quiz/result", response_model=QuizSubmitResult)
+def get_quiz_result(topic_id: int, module_id: int, db: Session = Depends(get_db)):
+    module = _module_or_404(db, topic_id, module_id)
+    result = quiz.get_last_quiz_result(module)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No quiz attempt yet for this module")
+    return result
+
+
 @router.post("/{topic_id}/modules/{module_id}/quiz/submit", response_model=QuizSubmitResult)
 def submit_quiz(topic_id: int, module_id: int, payload: QuizSubmitRequest, db: Session = Depends(get_db)):
     module = _module_or_404(db, topic_id, module_id)
