@@ -1,11 +1,16 @@
+from pathlib import Path
+
 import anthropic
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.database import Base, engine
 from app.routers import auth, modules, monitor, programs, sessions, topics
 from app.services import auth as auth_service
+
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 app = FastAPI(
     title="Personal Learning Agent",
@@ -62,11 +67,20 @@ app.include_router(monitor.router, prefix="/api")
 app.include_router(programs.router, prefix="/api")
 
 
-@app.get("/")
-def root():
-    return RedirectResponse(url="/docs")
-
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# Production: serve the built frontend from this same service — one container, one
+# origin, no dev-time proxy needed. Absent in local dev (no `frontend/dist` unless you
+# explicitly build it), where launch.sh runs the Vite dev server as its own process instead.
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="frontend-assets")
+
+    @app.get("/{full_path:path}")
+    def serve_frontend(full_path: str):
+        # Client-side routes (e.g. /topics/5) don't correspond to real files — always
+        # hand back index.html and let React Router take it from there. Registered last
+        # so it only ever catches paths no earlier route (api/health/docs/assets) matched.
+        return FileResponse(FRONTEND_DIST / "index.html")
