@@ -10,12 +10,20 @@ from app.models import ContentDepth, ContentType, FormatTier, LearningMethod, Mo
 # ---------------------------------------------------------------------------
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    confirm_password: str
+
+
 class LoginRequest(BaseModel):
+    username: str
     password: str
 
 
 class AuthStatus(BaseModel):
     authenticated: bool
+    username: str | None = None
 
 
 # ---------------------------------------------------------------------------

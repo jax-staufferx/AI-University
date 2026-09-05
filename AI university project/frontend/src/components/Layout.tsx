@@ -1,18 +1,25 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTheme } from '../theme';
-import { authLogout, listProposals } from '../api';
+import { authLogout, authStatus, listProposals } from '../api';
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { theme, toggleTheme, textSize, setTextSize } = useTheme();
   const location = useLocation();
   const [pendingCount, setPendingCount] = useState(0);
+  const [username, setUsername] = useState<string | null>(null);
 
   useEffect(() => {
     listProposals()
       .then((p) => setPendingCount(p.length))
       .catch(() => {});
   }, [location.pathname]);
+
+  useEffect(() => {
+    authStatus()
+      .then((s) => setUsername(s.username))
+      .catch(() => {});
+  }, []);
 
   const handleLogout = () => {
     authLogout().finally(() => window.location.reload());
@@ -58,6 +65,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             >
               {theme === 'light' ? '☾' : '☀'}
             </button>
+            {username && <span className="current-username">{username}</span>}
             <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
               Log Out
             </button>

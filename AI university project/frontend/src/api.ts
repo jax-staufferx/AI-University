@@ -8,6 +8,7 @@ const BASE = '/api';
 
 export interface AuthStatus {
   authenticated: boolean;
+  username: string | null;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -37,8 +38,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 // Auth
 export const authStatus = () => request<AuthStatus>('/auth/status');
-export const authLogin = (password: string) =>
-  request<AuthStatus>('/auth/login', { method: 'POST', body: JSON.stringify({ password }) });
+export const authLogin = (username: string, password: string) =>
+  request<AuthStatus>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+export const authRegister = (username: string, password: string, confirm_password: string) =>
+  request<AuthStatus>('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username, password, confirm_password }),
+  });
 export const authLogout = () => request<AuthStatus>('/auth/logout', { method: 'POST' });
 
 // Topics
