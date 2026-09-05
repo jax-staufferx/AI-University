@@ -1,0 +1,281 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { createTopic, continueBudget, getIntakeQuestions } from '../api';
+import type { BudgetError, ContentDepth, FormatTier } from '../types';
+import {
+  FORMAT_TIER_LABELS, FORMAT_TIER_DESCRIPTIONS,
+  CONTENT_DEPTH_LABELS, CONTENT_DEPTH_DESCRIPTIONS,
+} from '../constants';
+import LoadingState from '../components/LoadingState';
+import ErrorState from '../components/ErrorState';
+
+const RESEARCH_MESSAGES = [
+  'Researching your topic...',
+  'Reading through sources...',
+  'Synthesizing the digest...',
+  'Structuring the curriculum...',
+  'Almost there...',
+];
+
+const FIXED_INTAKE_QUESTION = 'Why are you learning this, and what do you want to be able to do with it afterward?';
+
+const TIERS: FormatTier[] = ['quick_dive', 'deep_dive', 'short_course', 'full_course'];
+const DEPTHS: ContentDepth[] = ['beginner', 'intermediate', 'advanced'];
+
+export default function CreateTopic() {
+  const navigate = useNavigate();
+  const [phase, setPhase] = useState<'form' | 'questions'>('form');
+  const [title, setTitle] = useState('');
+  const [tier, setTier] = useState<FormatTier | null>(null);
+  const [depth, setDepth] = useState<ContentDepth>('intermediate');
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [tailoredQuestions, setTailoredQuestions] = useState<string[]>([]);
+  const [answers, setAnswers] = useState<string[]>(['']);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(false);
+  const [budgetError, setBudgetError] = useState<BudgetError | null>(null);
+  const [continuing, setContinuing] = useState(false);
+
+  const allQuestions = [FIXED_INTAKE_QUESTION, ...tailoredQuestions];
+
+  const handleProceedToQuestions = async () => {
+    if (!title.trim() || !tier) return;
+    setLoadingQuestions(true);
+    try {
+      const questions = await getIntakeQuestions(title.trim(), tier);
+      setTailoredQuestions(questions);
+      setAnswers(new Array(questions.length + 1).fill(''));
+    } catch {
+      // Tailored questions are a nice-to-have — don't block topic creation if this fails.
+      setTailoredQuestions([]);
+      setAnswers(['']);
+    } finally {
+      setLoadingQuestions(false);
+      setPhase('questions');
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!title.trim() || !tier) return;
+    setSubmitting(true);
+    setError(false);
+    setBudgetError(null);
+    const learnerContext = allQuestions
+      .map((q, i) => (answers[i]?.trim() ? `${q}\n${answers[i].trim()}` : null))
+      .filter((entry): entry is string => entry !== null)
+      .join('\n\n');
+    try {
+      const topic = await createTopic(title.trim(), tier, depth, learnerContext || undefined);
+      routeToTopic(topic.id, topic.outline_approved, topic.current_module_id, topic.format_tier);
+    } catch (err: unknown) {
+      const e = err as Error & { budgetError?: BudgetError };
+      if (e.budgetError) {
+        setBudgetError(e.budgetError);
+      } else {
+        setError(true);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const routeToTopic = (topicId: number, outlineApproved: boolean, currentModuleId: number | null, formatTier: string) => {
+    if (!outlineApproved && (formatTier === 'short_course' || formatTier === 'full_course')) {
+      navigate(`/topics/${topicId}/outline`);
+    } else if (currentModuleId) {
+      navigate(`/topics/${topicId}/modules/${currentModuleId}`);
+    } else {
+      navigate(`/topics/${topicId}`);
+    }
+  };
+
+  const handleContinue = async () => {
+    if (!budgetError || !tier) return;
+    setContinuing(true);
+    try {
+      const topic = await continueBudget(budgetError.topic_id);
+      routeToTopic(topic.id, topic.outline_approved, topic.current_module_id, topic.format_tier);
+    } catch {
+      setError(true);
+    } finally {
+      setContinuing(false);
+    }
+  };
+
+  if (loadingQuestions) {
+    return (
+      <LoadingState
+        messages={['Thinking about what to ask...']}
+        ariaLabel="Preparing questions"
+      />
+    );
+  }
+
+  if (submitting || continuing) {
+    return (
+      <LoadingState
+        messages={RESEARCH_MESSAGES}
+        ariaLabel="Researching your topic"
+      />
+    );
+  }
+
+  if (budgetError) {
+    return (
+      <div className="budget-cap-state">
+        <h1 className="page-title">Research budget reached</h1>
+        <p className="budget-cap-text">
+          You've used {budgetError.call_count} of {budgetError.soft_cap} research calls for this topic.
+          That's the soft cap designed to keep things efficient. You can continue if you'd like —
+          the research will pick up where it left off.
+        </p>
+        <div className="budget-cap-actions">
+          <button className="btn btn-primary" onClick={handleContinue}>
+            Continue Anyway
+          </button>
+          <button className="btn btn-secondary" onClick={() => navigate('/')}>
+            Back to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return <ErrorState onRetry={() => { setError(false); navigate('/'); }} />;
+  }
+
+  if (phase === 'questions') {
+    return (
+      <div className="create-topic">
+        <div className="page-header">
+          <h1 className="page-title">A couple quick questions</h1>
+          <button className="btn btn-secondary" onClick={() => navigate('/')}>
+            Cancel
+          </button>
+        </div>
+        <p className="page-subtitle">
+          Optional — skip anything you don't want to answer. This just helps the research
+          focus on what you actually care about, instead of covering everything generically.
+        </p>
+
+        <form
+          onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}
+          className="create-topic-form"
+        >
+          {allQuestions.map((q, i) => (
+            <div key={i} className="form-field">
+              <label htmlFor={`intake-answer-${i}`} className="form-label">{q}</label>
+              <input
+                id={`intake-answer-${i}`}
+                type="text"
+                className="text-input"
+                value={answers[i] ?? ''}
+                onChange={(e) => setAnswers((a) => {
+                  const next = [...a];
+                  next[i] = e.target.value;
+                  return next;
+                })}
+                placeholder="(optional)"
+              />
+            </div>
+          ))}
+
+          <div className="module-cta">
+            <button type="button" className="btn btn-secondary" onClick={() => setPhase('form')}>
+              Back
+            </button>
+            <button type="submit" className="btn btn-primary btn-lg">
+              Start Research
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  return (
+    <div className="create-topic">
+      <div className="page-header">
+        <h1 className="page-title">New Topic</h1>
+        <button className="btn btn-secondary" onClick={() => navigate('/')}>
+          Cancel
+        </button>
+      </div>
+
+      <form
+        onSubmit={(e) => { e.preventDefault(); handleProceedToQuestions(); }}
+        className="create-topic-form"
+      >
+        <div className="form-field">
+          <label htmlFor="topic-title" className="form-label">
+            What do you want to learn?
+          </label>
+          <input
+            id="topic-title"
+            type="text"
+            className="text-input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Bayesian inference, Rust ownership model, history of the Silk Road..."
+            autoFocus
+          />
+        </div>
+
+        <fieldset className="tier-selector">
+          <legend className="form-label">Choose a format</legend>
+          <div className="tier-cards">
+            {TIERS.map((t) => (
+              <label
+                key={t}
+                className={`tier-card ${tier === t ? 'selected' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="format-tier"
+                  value={t}
+                  checked={tier === t}
+                  onChange={() => setTier(t)}
+                  className="sr-only"
+                />
+                <span className="tier-card-name">{FORMAT_TIER_LABELS[t]}</span>
+                <span className="tier-card-desc">{FORMAT_TIER_DESCRIPTIONS[t]}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset className="tier-selector">
+          <legend className="form-label">How much detail do you want?</legend>
+          <div className="tier-cards">
+            {DEPTHS.map((d) => (
+              <label
+                key={d}
+                className={`tier-card ${depth === d ? 'selected' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="content-depth"
+                  value={d}
+                  checked={depth === d}
+                  onChange={() => setDepth(d)}
+                  className="sr-only"
+                />
+                <span className="tier-card-name">{CONTENT_DEPTH_LABELS[d]}</span>
+                <span className="tier-card-desc">{CONTENT_DEPTH_DESCRIPTIONS[d]}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <button
+          type="submit"
+          className="btn btn-primary btn-lg"
+          disabled={!title.trim() || !tier}
+        >
+          Continue
+        </button>
+      </form>
+    </div>
+  );
+}

@@ -27,6 +27,16 @@ class FormatTier(str, enum.Enum):
     full_course = "full_course"
 
 
+class ContentDepth(str, enum.Enum):
+    """How technical the research content, quiz, and lesson should be. Chosen by the learner
+    at topic creation — distinct from the per-question 1-10 difficulty tags used internally
+    for quiz scoring and slideshow weighting, which are diagnostic, not a user setting."""
+
+    beginner = "beginner"
+    intermediate = "intermediate"
+    advanced = "advanced"
+
+
 class TopicStatus(str, enum.Enum):
     planning = "planning"
     active = "active"
@@ -63,13 +73,30 @@ class ProposalStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class Program(Base):
+    """An optional folder grouping several topics together — e.g. a self-built degree-style
+    curriculum spanning multiple courses. Purely local/organizational for now."""
+
+    __tablename__ = "programs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(500))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+    topics: Mapped[list["Topic"]] = relationship("Topic", back_populates="program")
+
+
 class Topic(Base):
     __tablename__ = "topics"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     title: Mapped[str] = mapped_column(String(500))
     format_tier: Mapped[FormatTier] = mapped_column(Enum(FormatTier))
+    depth: Mapped[ContentDepth] = mapped_column(Enum(ContentDepth), default=ContentDepth.intermediate)
     status: Mapped[TopicStatus] = mapped_column(Enum(TopicStatus), default=TopicStatus.planning)
+    program_id: Mapped[int | None] = mapped_column(ForeignKey("programs.id"), nullable=True)
+    program: Mapped["Program | None"] = relationship("Program", back_populates="topics")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -80,6 +107,10 @@ class Topic(Base):
     outline_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     outline_approved: Mapped[bool] = mapped_column(Boolean, default=False)
     running_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set when the background module-research task hits an error it can't recover from
+    # (anything other than the budget cap, which has its own dedicated flow). Cleared on
+    # the next successful research step so it doesn't linger after the real problem is fixed.
+    research_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     modules: Mapped[list["Module"]] = relationship(
         "Module", back_populates="topic", cascade="all, delete-orphan", order_by="Module.order_index"
@@ -103,6 +134,14 @@ class Module(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     researched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Diagnostic quiz gate: generated alongside the digest, must be passed before
+    # active-recall sessions (the 8 methods) unlock for this module.
+    quiz_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quiz_passed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Adaptive lesson generated only after the quiz is passed, weighted toward
+    # whatever the quiz showed the learner is shakiest on.
+    slideshow_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     topic: Mapped["Topic"] = relationship("Topic", back_populates="modules")
     sessions: Mapped[list["LearningSession"]] = relationship(

@@ -1,10 +1,10 @@
 import anthropic
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.database import Base, engine
-from app.routers import modules, monitor, sessions, topics
+from app.routers import modules, monitor, programs, sessions, topics
 
 app = FastAPI(
     title="Personal Learning Agent",
@@ -42,10 +42,16 @@ def handle_anthropic_api_error(request: Request, exc: anthropic.APIError):
     return JSONResponse(status_code=502, content={"detail": f"Anthropic API error: {exc.message}"})
 
 
-app.include_router(topics.router)
-app.include_router(modules.router)
-app.include_router(sessions.router)
-app.include_router(monitor.router)
+app.include_router(topics.router, prefix="/api")
+app.include_router(modules.router, prefix="/api")
+app.include_router(sessions.router, prefix="/api")
+app.include_router(monitor.router, prefix="/api")
+app.include_router(programs.router, prefix="/api")
+
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health")

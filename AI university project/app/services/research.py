@@ -12,16 +12,19 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.config import DIGESTS_DIR, settings
-from app.models import ContentType, FormatTier, Module, ModuleStatus, Topic, TopicStatus
+from app.database import SessionLocal
+from app.models import ContentDepth, ContentType, FormatTier, Module, ModuleStatus, Topic, TopicStatus
 from app.services import anthropic_client as ai
 from app.services import budget
 
 CONTEXT_HANDOFF_HEADING = "## Context Handoff"
+DISAGREEMENT_HEADING = "## Where Sources Disagree"
 
 DISAGREEMENT_INSTRUCTION = (
-    "When sources disagree on a fact, definition, or best practice, say so explicitly — name the "
-    "positions and who holds them — instead of silently picking one and presenting it as settled "
-    "consensus."
+    "When sources disagree on a fact, definition, or best practice, don't silently pick one and "
+    f"present it as settled consensus. Instead, include one section headed exactly '{DISAGREEMENT_HEADING}' "
+    "naming the positions and who holds them. Only include this section if there is a genuine "
+    "disagreement worth flagging — if sources agree, omit the section entirely rather than forcing one."
 )
 
 
@@ -65,11 +68,34 @@ def _append_running_context(topic: Topic, module_title: str, handoff: str) -> No
 # ---------------------------------------------------------------------------
 
 
-def _dive_system_prompt(depth: str) -> str:
+_DEPTH_INSTRUCTIONS = {
+    ContentDepth.beginner: (
+        "Write for someone with zero background in this subject. Define every technical term in "
+        "plain language the first time you use it. Favor intuition and concrete examples over "
+        "exhaustive precision — it's fine to leave out edge cases and advanced nuance a beginner "
+        "doesn't need yet. If in doubt, explain more, not less."
+    ),
+    ContentDepth.intermediate: (
+        "Write for a curious, educated learner with no specialized background in this subject but "
+        "comfortable with moderate complexity. Define specialized jargon on first use, but don't "
+        "over-explain generally-known concepts. Cover the real mechanics, not just surface "
+        "intuition, without chasing every edge case."
+    ),
+    ContentDepth.advanced: (
+        "Write for a learner who wants real technical depth — the precision and detail a "
+        "practitioner or advanced student would expect. Use field-standard terminology without "
+        "over-explaining it, engage with edge cases and nuance, and don't simplify away "
+        "complexity that actually matters."
+    ),
+}
+
+
+def _dive_system_prompt(pace: str, content_depth: ContentDepth) -> str:
     return (
         "You are a research assistant compiling a teaching digest for a self-directed learner. "
-        f"This is a {depth} pass. Produce a well-structured markdown digest that a learner could "
-        "study from directly: clear sections, concrete examples, and no padding. "
+        f"This is a {pace} pass. {_DEPTH_INSTRUCTIONS[content_depth]} Produce a well-structured "
+        "markdown digest that a learner could study from directly: clear sections, concrete "
+        "examples, and no padding. "
         f"{DISAGREEMENT_INSTRUCTION} End the digest with a '{CONTEXT_HANDOFF_HEADING}' section "
         "containing 3-6 bullet points of the key facts a follow-up study session should assume "
         "the learner already knows."
@@ -87,32 +113,23 @@ def kickoff(db: Session, topic: Topic) -> None:
 
 
 def resume_pending_research(db: Session, topic: Topic) -> None:
-    """Called after the user confirms continuing past the budget soft cap — picks up whatever
-    research step was interrupted."""
+    """Called after the user confirms continuing past the budget soft cap, for the
+    synchronous cases only. Once the outline is approved, remaining module research is long
+    enough that the router schedules research_all_modules_background instead of calling
+    anything here — see the /budget/continue handler."""
     if topic.format_tier in (FormatTier.quick_dive, FormatTier.deep_dive):
         if not topic.digest_path:
             kickoff(db, topic)
         return
 
-    if not topic.outline_approved:
-        if not topic.outline_json:
-            kickoff(db, topic)
-        return
-
-    next_pending = (
-        db.query(Module)
-        .filter(Module.topic_id == topic.id, Module.status == ModuleStatus.pending)
-        .order_by(Module.order_index)
-        .first()
-    )
-    if next_pending is not None:
-        research_module(db, topic, next_pending)
+    if not topic.outline_approved and not topic.outline_json:
+        kickoff(db, topic)
 
 
 def run_quick_dive(db: Session, topic: Topic) -> None:
     budget.check_and_increment(db, topic.id)
     digest = ai.research_call(
-        system=_dive_system_prompt("quick, broad (1-2 hour single sitting)"),
+        system=_dive_system_prompt("quick, broad (1-2 hour single sitting)", topic.depth),
         user_prompt=(
             f"Research the topic '{topic.title}' broadly enough for someone to get a working "
             "understanding in one sitting. Cover: what it is, why it matters, the core concepts "
@@ -140,11 +157,15 @@ def run_quick_dive(db: Session, topic: Topic) -> None:
     topic.status = TopicStatus.active
     db.commit()
 
+    from app.services import quiz as quiz_service
+
+    quiz_service.generate_quiz(db, module)
+
 
 def run_deep_dive(db: Session, topic: Topic) -> None:
     budget.check_and_increment(db, topic.id)
     digest = ai.research_call(
-        system=_dive_system_prompt("thorough (a weekend's worth of study)"),
+        system=_dive_system_prompt("thorough (a weekend's worth of study)", topic.depth),
         user_prompt=(
             f"Research the topic '{topic.title}' thoroughly enough for a weekend of focused study. "
             "Cover foundational concepts through to practical application, with enough depth that "
@@ -189,21 +210,27 @@ def run_deep_dive(db: Session, topic: Topic) -> None:
     )
 
     topic.digest_path = digest_path
+    new_modules = []
     for i, s in enumerate(split.get("sessions") or [{"title": topic.title, "one_liner": "Deep Dive"}]):
-        db.add(
-            Module(
-                topic_id=topic.id,
-                order_index=i,
-                title=s["title"],
-                one_liner=s.get("one_liner"),
-                content_type=ContentType.mixed,
-                status=ModuleStatus.researched,
-                digest_path=digest_path,
-                researched_at=datetime.now(timezone.utc),
-            )
+        m = Module(
+            topic_id=topic.id,
+            order_index=i,
+            title=s["title"],
+            one_liner=s.get("one_liner"),
+            content_type=ContentType.mixed,
+            status=ModuleStatus.researched,
+            digest_path=digest_path,
+            researched_at=datetime.now(timezone.utc),
         )
+        db.add(m)
+        new_modules.append(m)
     topic.status = TopicStatus.active
     db.commit()
+
+    from app.services import quiz as quiz_service
+
+    for m in new_modules:
+        quiz_service.generate_quiz(db, m)
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +317,8 @@ def generate_outline(db: Session, topic: Topic) -> list[dict]:
         ),
         user_prompt=(
             f"Topic: '{topic.title}'. Format: {topic.format_tier.value} "
-            f"({_MODULE_COUNT_GUIDANCE[topic.format_tier]}).\n\n"
+            f"({_MODULE_COUNT_GUIDANCE[topic.format_tier]}). Target depth: {topic.depth.value} — "
+            f"{_DEPTH_INSTRUCTIONS[topic.depth]}\n\n"
             "Research: (1) how this subject is structured in real courses/syllabi/textbooks, "
             "(2) the core pillars ranked must-know vs nice-to-know, (3) real prerequisite "
             "relationships between the pillars. Write up your findings as notes — this will be "
@@ -309,7 +337,8 @@ def generate_outline(db: Session, topic: Topic) -> list[dict]:
         ),
         user_prompt=(
             f"Scoping notes for '{topic.title}' ({topic.format_tier.value}, "
-            f"target: {_MODULE_COUNT_GUIDANCE[topic.format_tier]}):\n\n{scoping_notes}\n\n"
+            f"target: {_MODULE_COUNT_GUIDANCE[topic.format_tier]}, depth: {topic.depth.value}):\n\n"
+            f"{scoping_notes}\n\n"
             "Produce the module list. Each module needs a title, a one-line description, a "
             "content_type (skill = hands-on/practice-heavy, conceptual = ideas/theory, mixed = both), "
             "and prerequisite_titles referencing other module titles in this same list that must be "
@@ -350,13 +379,64 @@ def approve_outline(db: Session, topic: Topic, modules_override: list[dict] | No
     topic.status = TopicStatus.active
     db.commit()
     db.refresh(topic)
-
-    first_module = (
-        db.query(Module).filter_by(topic_id=topic.id, order_index=0).one_or_none()
-    )
-    if first_module is not None:
-        research_module(db, topic, first_module)
     return topic
+
+
+def research_all_pending_modules(db: Session, topic: Topic) -> None:
+    """Researches every still-pending module in order, each building on the running context
+    from the ones before it — the full course (all digests and quizzes) ends up ready before
+    the learner starts module 1. Modules stay locked in the UI regardless (see
+    is_module_unlocked) until earlier ones are completed; this only removes the research wait.
+    Raises BudgetExceeded on whichever module hits the cap — everything before it stays done."""
+    pending = (
+        db.query(Module)
+        .filter(Module.topic_id == topic.id, Module.digest_path.is_(None))
+        .order_by(Module.order_index)
+        .all()
+    )
+    for m in pending:
+        research_module(db, topic, m)
+
+
+def research_all_modules_background(topic_id: int) -> None:
+    """FastAPI BackgroundTask entry point — runs after the HTTP response has already gone
+    out (the whole point: a full course can take minutes to research). Opens its own DB
+    session since the request-scoped one is closed by the time this runs.
+
+    There's no HTTP request left to raise an error back to, so every failure mode has to end
+    quietly here: the budget cap stops silently (the frontend sees that via budget_cap_hit
+    and resumes explicitly), and anything else — a bad API key, no credits, a network error —
+    gets recorded on topic.research_error instead of crashing the background task and leaving
+    modules_researched stuck below modules_total forever with no explanation."""
+    db = SessionLocal()
+    try:
+        topic = db.get(Topic, topic_id)
+        if topic is None:
+            return
+        topic.research_error = None
+        db.commit()
+        try:
+            research_all_pending_modules(db, topic)
+        except budget.BudgetExceeded:
+            pass
+        except Exception as e:
+            topic.research_error = str(e)[:2000]
+            db.commit()
+    finally:
+        db.close()
+
+
+def is_module_unlocked(module: Module) -> bool:
+    """Quick Dive is always a single module, always unlocked once researched. Everything else
+    (Deep Dive, Short Course, Full Course) unlocks sequentially — a module is available only
+    once every module before it in the same topic is completed."""
+    if module.topic.format_tier == FormatTier.quick_dive:
+        return True
+    return all(
+        sibling.status == ModuleStatus.completed
+        for sibling in module.topic.modules
+        if sibling.order_index < module.order_index
+    )
 
 
 def research_module(db: Session, topic: Topic, module: Module) -> None:
@@ -371,7 +451,7 @@ def research_module(db: Session, topic: Topic, module: Module) -> None:
         else ""
     )
     digest = ai.research_call(
-        system=_dive_system_prompt("module-level, module-by-module") + (
+        system=_dive_system_prompt("module-level, module-by-module", topic.depth) + (
             " This module is part of a larger course — write it assuming the learner has completed "
             "the earlier modules, and don't repeat material already covered."
         ),
@@ -393,28 +473,20 @@ def research_module(db: Session, topic: Topic, module: Module) -> None:
     _append_running_context(topic, module.title, _extract_context_handoff(digest))
     db.commit()
 
+    from app.services import quiz as quiz_service
+
+    quiz_service.generate_quiz(db, module)
+
 
 def advance_after_module_completion(db: Session, topic: Topic, completed_module: Module) -> None:
-    """Kick off research for the next pending module immediately, so it's ready when the
-    learner comes back. No live-research wait mid-session."""
-    next_module = (
-        db.query(Module)
-        .filter(Module.topic_id == topic.id, Module.order_index > completed_module.order_index)
-        .order_by(Module.order_index)
-        .first()
+    """Checks whether the topic is now fully completed. Research for every module already
+    happened upfront (course tiers, in the background) or at topic creation (Quick/Deep
+    Dive) — modules simply unlock in sequence as earlier ones complete (is_module_unlocked),
+    so there's nothing left to kick off here."""
+    remaining = (
+        db.query(Module).filter(Module.topic_id == topic.id, Module.status != ModuleStatus.completed).count()
     )
-    if next_module is None:
-        # all modules done
-        remaining = (
-            db.query(Module)
-            .filter(Module.topic_id == topic.id, Module.status != ModuleStatus.completed)
-            .count()
-        )
-        if remaining == 0:
-            topic.status = TopicStatus.completed
-            topic.completed_at = datetime.now(timezone.utc)
-            db.commit()
-        return
-
-    if next_module.status == ModuleStatus.pending:
-        research_module(db, topic, next_module)
+    if remaining == 0:
+        topic.status = TopicStatus.completed
+        topic.completed_at = datetime.now(timezone.utc)
+        db.commit()

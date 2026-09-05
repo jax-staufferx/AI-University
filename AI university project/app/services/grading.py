@@ -39,21 +39,22 @@ def grade_session(
     method: LearningMethod,
     transcript: list[tuple[str, str]],
     final_response: str,
-) -> tuple[int, str]:
+) -> tuple[int, str, sandbox.SandboxResult | None]:
     digest = read_digest(module.digest_path) or "(no digest available)"
     execution_note = ""
+    execution_result: sandbox.SandboxResult | None = None
 
     if method == LearningMethod.ship_it and _looks_like_code(final_response):
-        result = sandbox.run_python(final_response)
-        status = "TIMED OUT" if result.timed_out else f"exit code {result.return_code}"
+        execution_result = sandbox.run_python(final_response)
+        status = "TIMED OUT" if execution_result.timed_out else f"exit code {execution_result.return_code}"
         network_note = (
             "network was sandboxed (isolated namespace)"
-            if result.network_sandboxed
+            if execution_result.network_sandboxed
             else "network isolation unavailable on this host — ran without a network sandbox"
         )
         execution_note = (
             f"\n\nActual execution result ({status}, {network_note}):\n"
-            f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}\n\n"
+            f"stdout:\n{execution_result.stdout}\n\nstderr:\n{execution_result.stderr}\n\n"
             "Grade based on whether it actually ran correctly and produced the right result — "
             "do not just eyeball-review the code."
         )
@@ -67,7 +68,7 @@ def grade_session(
     result = ai.structured_call(system=_SYSTEM, user_prompt=prompt, schema=_GRADE_SCHEMA, max_tokens=1500)
     score = max(0, min(100, int(result.get("score", 0))))
     feedback = result.get("feedback", "")
-    return score, feedback
+    return score, feedback, execution_result
 
 
 def _looks_like_code(text: str) -> bool:
