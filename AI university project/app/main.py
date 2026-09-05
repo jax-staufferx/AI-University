@@ -41,7 +41,7 @@ async def require_auth(request: Request, call_next):
     if not path.startswith("/api/") or path.startswith("/api/auth/"):
         return await call_next(request)
     token = request.cookies.get(auth_service.COOKIE_NAME)
-    if not auth_service.is_valid_session_token(token):
+    if auth_service.verify_session_token(token) is None:
         return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
     return await call_next(request)
 

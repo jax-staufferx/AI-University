@@ -247,3 +247,16 @@ class MonitorProposal(Base):
     rationale: Mapped[str] = mapped_column(Text)
     status: Mapped[ProposalStatus] = mapped_column(Enum(ProposalStatus), default=ProposalStatus.pending)
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Account(Base):
+    """Login credentials only — accounts share the same topics/data. This app is still
+    fundamentally single-dataset; accounts exist so more than one person can have their
+    own username/password rather than one shared password for everyone."""
+
+    __tablename__ = "accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

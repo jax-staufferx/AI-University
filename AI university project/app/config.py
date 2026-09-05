@@ -14,10 +14,7 @@ class Settings(BaseSettings):
     research_call_soft_cap: int = 40
     database_path: Path = DATA_DIR / "learning_agent.db"
 
-    # Single shared password gating the whole app — no accounts, matching the
-    # rest of this app's single-user design. Session cookie is HMAC-signed with
-    # session_secret so no server-side session store is needed.
-    auth_password: str = ""
+    # Key used to HMAC-sign session cookies — no server-side session store needed.
     session_secret: str = ""
 
     research_model: str = "claude-opus-5"

@@ -1,11 +1,14 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { authLogin, authStatus } from '../api';
+import { authLogin, authRegister, authStatus } from '../api';
 import LoadingState from './LoadingState';
 
 export default function LoginGate({ children }: { children: ReactNode }) {
   const [checking, setChecking] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -16,16 +19,31 @@ export default function LoginGate({ children }: { children: ReactNode }) {
       .finally(() => setChecking(false));
   }, []);
 
+  const switchMode = (next: 'login' | 'register') => {
+    setMode(next);
+    setError(null);
+    setPassword('');
+    setConfirmPassword('');
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!password.trim() || submitting) return;
+    if (!username.trim() || !password || submitting) return;
+    if (mode === 'register' && password !== confirmPassword) {
+      setError("Passwords don't match");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      await authLogin(password);
+      if (mode === 'register') {
+        await authRegister(username.trim(), password, confirmPassword);
+      } else {
+        await authLogin(username.trim(), password);
+      }
       setAuthenticated(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
       setSubmitting(false);
     }
@@ -36,10 +54,23 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   }
 
   if (!authenticated) {
+    const disabled = !username.trim() || !password || (mode === 'register' && !confirmPassword) || submitting;
     return (
       <div className="login-gate">
         <form onSubmit={handleSubmit} className="login-form">
           <h1 className="page-title">Personal Learning Agent</h1>
+          <div className="form-field">
+            <label htmlFor="login-username" className="form-label">Username</label>
+            <input
+              id="login-username"
+              type="text"
+              className="text-input"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoFocus
+              autoComplete="username"
+            />
+          </div>
           <div className="form-field">
             <label htmlFor="login-password" className="form-label">Password</label>
             <input
@@ -48,17 +79,32 @@ export default function LoginGate({ children }: { children: ReactNode }) {
               className="text-input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoFocus
-              autoComplete="current-password"
+              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
             />
           </div>
+          {mode === 'register' && (
+            <div className="form-field">
+              <label htmlFor="login-confirm-password" className="form-label">Verify Password</label>
+              <input
+                id="login-confirm-password"
+                type="password"
+                className="text-input"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+          )}
           {error && <p className="error-text" role="alert">{error}</p>}
+          <button type="submit" className="btn btn-primary btn-lg" disabled={disabled}>
+            {submitting ? 'Please wait...' : mode === 'register' ? 'Create Account' : 'Log In'}
+          </button>
           <button
-            type="submit"
-            className="btn btn-primary btn-lg"
-            disabled={!password.trim() || submitting}
+            type="button"
+            className="btn btn-link login-mode-toggle"
+            onClick={() => switchMode(mode === 'register' ? 'login' : 'register')}
           >
-            {submitting ? 'Checking...' : 'Log In'}
+            {mode === 'register' ? 'Already have an account? Log in' : 'Need an account? Create one'}
           </button>
         </form>
       </div>
