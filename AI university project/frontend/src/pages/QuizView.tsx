@@ -21,12 +21,14 @@ export default function QuizView() {
   const [justSubmitted, setJustSubmitted] = useState(false);
   const [slideshow, setSlideshow] = useState<Slideshow | null>(null);
   const [loadingSlideshow, setLoadingSlideshow] = useState(false);
+  const [slideshowError, setSlideshowError] = useState(false);
 
   const fetchSlideshow = () => {
     setLoadingSlideshow(true);
+    setSlideshowError(false);
     getSlideshow(tid, mid)
       .then(setSlideshow)
-      .catch(() => {})
+      .catch(() => setSlideshowError(true))
       .finally(() => setLoadingSlideshow(false));
   };
 
@@ -115,8 +117,13 @@ export default function QuizView() {
               <li key={r.question_id} className={`quiz-result-item ${r.correct ? 'correct' : 'incorrect'}`}>
                 <div className="quiz-result-header">
                   <span>{r.correct ? '✓' : '✗'} {r.concept}</span>
-                  <span className="topic-card-tier">difficulty {r.difficulty}/10</span>
+                  <span className="topic-card-tier">
+                    {Math.round(r.credit * 100)}% · difficulty {r.difficulty}/10
+                  </span>
                 </div>
+                <p className="quiz-explanation">
+                  Your answer: {r.user_answer || '(no answer)'}
+                </p>
                 {!r.correct && (
                   <p className="quiz-explanation">
                     Correct answer: {r.correct_answer}<br />
@@ -131,6 +138,12 @@ export default function QuizView() {
             <>
               {loadingSlideshow && (
                 <LoadingState messages={['Building your lesson...']} ariaLabel="Loading slideshow" />
+              )}
+              {slideshowError && !loadingSlideshow && (
+                <p className="error-text" role="alert">
+                  The lesson couldn't be generated right now. You can still continue to practice —
+                  try reopening this quiz result later to get the lesson.
+                </p>
               )}
               {slideshow && slideshow.slides.length > 0 && (
                 <div className="slideshow-block">

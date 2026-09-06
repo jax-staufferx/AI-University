@@ -78,13 +78,22 @@ _SHORT_ANSWER_GRADING_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "question_id": {"type": "string"},
-                    "correct": {"type": "boolean"},
+                    "credit": {
+                        "type": "number",
+                        "description": (
+                            "0.0-1.0 partial credit toward this question's weight. 1.0 for a fully "
+                            "correct answer, 0.0 for one showing no grasp of the concept. Give "
+                            "meaningful partial credit (e.g. 0.6-0.85) for answers that demonstrate "
+                            "real understanding but miss a detail, use imprecise wording, or are "
+                            "incomplete — do not collapse a mostly-correct answer to 0."
+                        ),
+                    },
                     "explanation": {
                         "type": "string",
                         "description": "One or two sentences, direct, tied to the model answer.",
                     },
                 },
-                "required": ["question_id", "correct", "explanation"],
+                "required": ["question_id", "credit", "explanation"],
                 "additionalProperties": False,
             },
         }
@@ -176,6 +185,8 @@ def grade_quiz(db: Session, module: Module, answers: list[QuizAnswer]) -> QuizSu
                 concept=q["concept"],
                 difficulty=q["difficulty"],
                 correct=correct,
+                credit=1.0 if correct else 0.0,
+                user_answer=response,
                 correct_answer=q["correct_answer"],
                 explanation="Correct." if correct else f"The correct answer is: {q['correct_answer']}",
             )
@@ -191,9 +202,13 @@ def grade_quiz(db: Session, module: Module, answers: list[QuizAnswer]) -> QuizSu
         )
         judged = ai.structured_call(
             system=(
-                "You grade short-answer quiz responses against a model answer/rubric. Be strict "
-                "but fair — the learner doesn't need the exact wording, but needs to demonstrate "
-                "the same understanding. Judge each question independently."
+                "You grade short-answer quiz responses against a model answer/rubric, giving "
+                "partial credit — this is not pass/fail. The learner doesn't need the exact "
+                "wording or every rubric element; score by how much of the core understanding "
+                "the answer actually demonstrates. An answer that captures the main idea but is "
+                "incomplete, imprecise, or missing a minor element should score 0.6-0.85, not 0. "
+                "Reserve near-0 scores for answers that show a real misunderstanding or say "
+                "nothing relevant. Judge each question independently."
             ),
             user_prompt=batch_prompt,
             schema=_SHORT_ANSWER_GRADING_SCHEMA,
@@ -203,17 +218,20 @@ def grade_quiz(db: Session, module: Module, answers: list[QuizAnswer]) -> QuizSu
         judgments = {j["question_id"]: j for j in judged.get("judgments") or []}
         for q, response in short_answer_batch:
             j = judgments.get(q["id"])
+            credit = max(0.0, min(1.0, float(j["credit"]))) if j else 0.0
             results[q["id"]] = QuizQuestionResult(
                 question_id=q["id"],
                 concept=q["concept"],
                 difficulty=q["difficulty"],
-                correct=bool(j and j.get("correct")),
+                correct=credit >= 0.5,
+                credit=credit,
+                user_answer=response,
                 correct_answer=q["correct_answer"],
                 explanation=(j["explanation"] if j else "Not graded — no response received."),
             )
 
     total_weight = sum(q["difficulty"] for q in stored) or 1
-    earned_weight = sum(q["difficulty"] for q in stored if results[q["id"]].correct)
+    earned_weight = sum(q["difficulty"] * results[q["id"]].credit for q in stored)
     weighted_score = earned_weight / total_weight
     passed = weighted_score >= QUIZ_PASS_THRESHOLD
 

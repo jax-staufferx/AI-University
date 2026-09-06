@@ -125,6 +125,8 @@ export interface QuizQuestionResult {
   concept: string;
   difficulty: number;
   correct: boolean;
+  credit: number;
+  user_answer: string;
   correct_answer: string;
   explanation: string;
 }
@@ -135,6 +137,12 @@ export interface QuizSubmitResult {
   weighted_score: number;
   threshold: number;
   results: QuizQuestionResult[];
+  slideshow_ready: boolean;
+}
+
+export interface QuizOverrideResult {
+  module_id: number;
+  passed: boolean;
   slideshow_ready: boolean;
 }
 

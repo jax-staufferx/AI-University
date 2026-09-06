@@ -122,5 +122,15 @@ def get_slideshow(topic_id: int, module_id: int, db: Session = Depends(get_db)):
     if not module.quiz_passed:
         raise HTTPException(status_code=409, detail="Pass the quiz first to unlock the lesson")
     if not module.slideshow_json:
-        raise HTTPException(status_code=409, detail="Lesson not generated yet — try resubmitting the quiz")
+        # Generation may have failed silently after the quiz was graded (e.g. budget exceeded) —
+        # retry here instead of leaving the module permanently stuck with no lesson.
+        last_result = quiz.get_last_quiz_result(module)
+        if last_result is None:
+            raise HTTPException(status_code=409, detail="Lesson not generated yet — try resubmitting the quiz")
+        try:
+            slideshow.generate_slideshow(db, module, last_result)
+        except budget.BudgetExceeded as e:
+            raise _budget_error(e)
+        if not module.slideshow_json:
+            raise HTTPException(status_code=409, detail="Lesson not generated yet — try resubmitting the quiz")
     return slideshow.get_slideshow_for_frontend(module)

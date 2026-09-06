@@ -5,7 +5,7 @@ learner moves on regardless."""
 from app.models import LearningMethod, Module
 from app.services import anthropic_client as ai
 from app.services import sandbox
-from app.services.research import read_digest
+from app.services.research import _DEPTH_INSTRUCTIONS, read_digest
 
 _GRADE_SCHEMA = {
     "type": "object",
@@ -28,9 +28,12 @@ _GRADE_SCHEMA = {
 
 _SYSTEM = (
     "You are a strict, honest grader for a self-directed learner. Grade against the reference "
-    "digest, not against effort or intent. Be specific about what's wrong and why. Do not soften "
-    "the feedback or add encouragement filler — the learner wants to know exactly where they "
-    "stand. A low score is fine; say so plainly."
+    "digest and against what the exercise prompt actually asked for — not against an idealized "
+    "maximal answer that covers every conceivable angle beyond what was asked. Be specific about "
+    "what's wrong and why. Do not soften the feedback or add encouragement filler — the learner "
+    "wants to know exactly where they stand. Calibrate your rigor to the learner's stated depth "
+    "level, given below: a beginner or quick-dive response should be judged on genuine conceptual "
+    "grasp, not exhaustive technical completeness. A low score is fine; say so plainly."
 )
 
 
@@ -61,7 +64,9 @@ def grade_session(
 
     convo = "\n\n".join(f"{role.upper()}: {content}" for role, content in transcript)
     prompt = (
-        f"Module: {module.title} — {module.one_liner}\n\nReference digest:\n{digest}\n\n"
+        f"Module: {module.title} — {module.one_liner}\n\n"
+        f"Learner's chosen depth: {_DEPTH_INSTRUCTIONS[module.topic.depth]}\n\n"
+        f"Reference digest:\n{digest}\n\n"
         f"Exercise transcript:\n{convo}\n\nFinal learner response:\n{final_response}"
         f"{execution_note}\n\nGrade this."
     )

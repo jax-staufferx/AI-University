@@ -207,6 +207,8 @@ class QuizQuestionResult(BaseModel):
     concept: str
     difficulty: int
     correct: bool
+    credit: float
+    user_answer: str
     correct_answer: str
     explanation: str
 
