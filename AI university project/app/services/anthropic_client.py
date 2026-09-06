@@ -19,7 +19,12 @@ def _web_search_tool(max_uses: int = 8) -> dict:
 
 
 def _extract_text(response: anthropic.types.Message) -> str:
-    return "\n".join(block.text for block in response.content if block.type == "text")
+    text = "\n".join(block.text for block in response.content if block.type == "text")
+    if response.stop_reason == "max_tokens":
+        # Silently returning partial text reads as a clean response with the tail quietly missing —
+        # surfacing it as an error is more honest than serving cut-off content.
+        raise RuntimeError("Response was cut off by the max_tokens limit before it finished.")
+    return text
 
 
 def research_call(

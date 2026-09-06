@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import ContentType, LearnerProfile, LearningMethod, Module
 from app.services import anthropic_client as ai
-from app.services.research import read_digest
+from app.services.research import _DEPTH_INSTRUCTIONS, read_digest
 
 # Methods that involve a genuine back-and-forth before grading (poke holes / defend / argue).
 INTERACTIVE_METHODS = {LearningMethod.sparring, LearningMethod.teach_it_back}
@@ -115,15 +115,20 @@ def opening_prompt(module: Module, method: LearningMethod) -> str:
     system = (
         "You are a learning coach running an active-learning exercise. Ground everything in the "
         "reference digest below — don't invent facts that contradict it. Be direct and concise; "
-        "this is the opening prompt for the exercise, not a lecture."
+        "this is the opening prompt for the exercise, not a lecture. Keep the exercise itself "
+        "tightly scoped: state one clear task in a few sentences. Do not turn it into a multi-part "
+        "checklist, a numbered list of mandatory requirements, or a formal rubric with named "
+        "constraints — grading happens separately, after the fact; the learner should be able to "
+        "give a genuine first-pass answer in a paragraph or two, not write an audit response."
     )
     prompt = (
         f"Module: {module.title} — {module.one_liner}\n\n"
         f"Reference digest:\n{digest}\n\n"
+        f"Learner's chosen depth: {_DEPTH_INSTRUCTIONS[module.topic.depth]}\n\n"
         f"Exercise: {_METHOD_LABELS[method]}. {instructions[method]}\n\n"
         "Write only the message the learner will see — no meta-commentary."
     )
-    return ai.plain_call(system=system, user_prompt=prompt, max_tokens=1000, effort="medium")
+    return ai.plain_call(system=system, user_prompt=prompt, max_tokens=1500, effort="medium")
 
 
 def followup_prompt(module: Module, method: LearningMethod, transcript: list[tuple[str, str]]) -> str:
@@ -150,7 +155,7 @@ def followup_prompt(module: Module, method: LearningMethod, transcript: list[tup
         f"Exercise: {_METHOD_LABELS[method]}.\n\nTranscript so far:\n{convo}\n\n"
         f"{stance}\n\nWrite only the message the learner will see."
     )
-    return ai.plain_call(system=system, user_prompt=prompt, max_tokens=800, effort="medium")
+    return ai.plain_call(system=system, user_prompt=prompt, max_tokens=1200, effort="medium")
 
 
 def method_label(method: LearningMethod) -> str:
