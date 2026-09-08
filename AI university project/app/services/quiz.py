@@ -11,6 +11,7 @@ Difficulty (1-10, assigned per question at generation time) does double duty:
 import json
 import uuid
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.models import Module
@@ -63,6 +64,7 @@ _QUIZ_GENERATION_SCHEMA = {
                 "required": ["type", "concept", "difficulty", "question", "options", "correct_answer"],
                 "additionalProperties": False,
             },
+            "minItems": 1,
         }
     },
     "required": ["questions"],
@@ -130,8 +132,15 @@ def generate_quiz(db: Session, module: Module) -> None:
         effort="medium",
     )
 
+    raw_questions = result.get("questions") or []
+    if not raw_questions:
+        # An empty quiz is worse than no quiz: has_quiz becomes True, the weighted score is
+        # always 0/1 < threshold, and the module can never be passed — sessions and the lesson
+        # stay permanently locked. Fail loudly so the caller can surface/retry instead.
+        raise RuntimeError("Quiz generation returned no questions.")
+
     questions = []
-    for q in result.get("questions") or []:
+    for q in raw_questions:
         questions.append(
             {
                 "id": uuid.uuid4().hex[:8],
@@ -218,7 +227,10 @@ def grade_quiz(db: Session, module: Module, answers: list[QuizAnswer]) -> QuizSu
         judgments = {j["question_id"]: j for j in judged.get("judgments") or []}
         for q, response in short_answer_batch:
             j = judgments.get(q["id"])
-            credit = max(0.0, min(1.0, float(j["credit"]))) if j else 0.0
+            try:
+                credit = max(0.0, min(1.0, float(j["credit"]))) if j else 0.0
+            except (TypeError, ValueError):
+                credit = 0.0  # model returned a non-numeric credit; don't 500 mid-grade
             results[q["id"]] = QuizQuestionResult(
                 question_id=q["id"],
                 concept=q["concept"],
@@ -255,4 +267,9 @@ def grade_quiz(db: Session, module: Module, answers: list[QuizAnswer]) -> QuizSu
 def get_last_quiz_result(module: Module) -> QuizSubmitResult | None:
     if not module.quiz_last_result_json:
         return None
-    return QuizSubmitResult.model_validate_json(module.quiz_last_result_json)
+    try:
+        return QuizSubmitResult.model_validate_json(module.quiz_last_result_json)
+    except ValidationError:
+        # Result stored before a schema change (e.g. missing the newer credit/user_answer
+        # fields) — degrade to "no past attempt" instead of 500ing the quiz result endpoint.
+        return None

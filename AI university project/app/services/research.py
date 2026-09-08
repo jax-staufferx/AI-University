@@ -471,8 +471,18 @@ def research_all_modules_background(topic_id: int) -> None:
         except budget.BudgetExceeded:
             pass
         except Exception as e:
-            topic.research_error = str(e)[:2000]
-            db.commit()
+            # Roll back first: if the failure was a flush/commit error the session is in a
+            # pending-rollback state, and writing research_error would itself raise
+            # PendingRollbackError — leaving research_in_progress stuck True forever with no
+            # error ever surfaced to the UI.
+            db.rollback()
+            try:
+                topic = db.get(Topic, topic_id)
+                if topic is not None:
+                    topic.research_error = str(e)[:2000]
+                    db.commit()
+            except Exception:
+                db.rollback()
     finally:
         db.close()
 

@@ -35,11 +35,17 @@ export default function SessionView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const load = () => {
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const reload = () => setReloadNonce((n) => n + 1);
+
+  // Stale-guarded so a slow session fetch can't overwrite a session the user navigated to since.
+  useEffect(() => {
+    let stale = false;
     setLoading(true);
     setError(false);
     getSession(sid)
       .then((s) => {
+        if (stale) return;
         setSession(s);
         setMessages(s.messages);
         if (s.completed_at !== null) {
@@ -48,11 +54,16 @@ export default function SessionView() {
           if (s.outcome_summary) setFeedback(s.outcome_summary);
         }
       })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, [sid]);
+      .catch(() => {
+        if (!stale) setError(true);
+      })
+      .finally(() => {
+        if (!stale) setLoading(false);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [sid, reloadNonce]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -81,7 +92,9 @@ export default function SessionView() {
       }
     } catch {
       setError(true);
-      setMessages((prev) => prev.filter((m) => m.content !== response || m.role !== 'user'));
+      // Remove only the optimistic message we just appended — filtering by content would
+      // also wipe an identical earlier answer (common in short rapid-recall rounds).
+      setMessages((prev) => prev.slice(0, -1));
       setInput(response);
     } finally {
       setSubmitting(false);
@@ -113,7 +126,7 @@ export default function SessionView() {
   }
 
   if (error || !session) {
-    return <ErrorState onRetry={load} />;
+    return <ErrorState onRetry={reload} />;
   }
 
   const methodInfo = METHOD_INFO[session.method_used];
@@ -213,6 +226,7 @@ export default function SessionView() {
             onKeyDown={handleKeyDown}
             placeholder={isCodeInput ? 'Write your code here. Tab to indent, Cmd/Ctrl+Enter to submit.' : 'Write your response. Cmd/Ctrl+Enter to submit.'}
             rows={isCodeInput ? 12 : 6}
+            maxLength={50000}
             aria-label={isCodeInput ? 'Code editor' : 'Response input'}
           />
           <button

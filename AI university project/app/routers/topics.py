@@ -106,6 +106,11 @@ def get_intake_questions(payload: IntakeQuestionsRequest):
 
 @router.post("", response_model=TopicDetail)
 def create_topic(payload: TopicCreate, db: Session = Depends(get_db)):
+    if payload.program_id is not None:
+        from app.models import Program
+
+        if db.get(Program, payload.program_id) is None:
+            raise HTTPException(status_code=404, detail="Program not found")
     topic = Topic(
         title=payload.title,
         format_tier=payload.format_tier,
@@ -119,15 +124,21 @@ def create_topic(payload: TopicCreate, db: Session = Depends(get_db)):
     db.refresh(topic)
     budget.get_or_create(db, topic.id)
 
+    topic_id = topic.id
     try:
         research.kickoff(db, topic)
     except budget.BudgetExceeded as e:
         raise _budget_error(e)
     except Exception as e:
         # Nothing usable was produced (no digest, no modules) — don't leave a dead
-        # "planning" topic behind with no explanation and no way to retry.
-        db.delete(topic)
-        db.commit()
+        # "planning" topic behind with no explanation and no way to retry. Roll back first
+        # in case the failure left the session in a pending-rollback state, then re-fetch and
+        # delete so the cleanup itself can't raise and mask the real error.
+        db.rollback()
+        dead = db.get(Topic, topic_id)
+        if dead is not None:
+            db.delete(dead)
+            db.commit()
         raise HTTPException(status_code=502, detail=f"Research failed, so this topic wasn't created: {e}")
 
     db.refresh(topic)

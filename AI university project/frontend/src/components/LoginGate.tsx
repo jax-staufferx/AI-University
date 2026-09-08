@@ -19,6 +19,17 @@ export default function LoginGate({ children }: { children: ReactNode }) {
       .finally(() => setChecking(false));
   }, []);
 
+  // If any protected request 401s mid-session (cookie expired), drop back to the login form
+  // rather than leaving the current page stuck on a generic error.
+  useEffect(() => {
+    const onExpired = () => {
+      setAuthenticated(false);
+      setChecking(false);
+    };
+    window.addEventListener('auth:expired', onExpired);
+    return () => window.removeEventListener('auth:expired', onExpired);
+  }, []);
+
   const switchMode = (next: 'login' | 'register') => {
     setMode(next);
     setError(null);

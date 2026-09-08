@@ -94,5 +94,9 @@ def structured_call(
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
         messages=[{"role": "user", "content": user_prompt}],
     )
-    text = next(block.text for block in response.content if block.type == "text")
+    # _extract_text raises on a max_tokens cutoff — critical here, since a truncated response
+    # is invalid JSON and json.loads would otherwise throw an opaque JSONDecodeError.
+    text = _extract_text(response)
+    if not text:
+        raise RuntimeError("Model returned no text content for a structured request.")
     return json.loads(text)

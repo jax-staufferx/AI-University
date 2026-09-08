@@ -32,7 +32,12 @@ export default function QuizView() {
       .finally(() => setLoadingSlideshow(false));
   };
 
-  const load = () => {
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const reload = () => setReloadNonce((n) => n + 1);
+
+  // Stale-guarded so a slow quiz fetch for a previous module can't overwrite the current one.
+  useEffect(() => {
+    let stale = false;
     setLoading(true);
     setError(false);
     setJustSubmitted(false);
@@ -41,17 +46,24 @@ export default function QuizView() {
       getQuizResult(tid, mid).catch(() => null), // no past attempt yet isn't an error
     ])
       .then(([q, pastResult]) => {
+        if (stale) return;
         setQuiz(q);
         if (pastResult) {
           setResult(pastResult);
           if (pastResult.passed) fetchSlideshow();
         }
       })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, [tid, mid]);
+      .catch(() => {
+        if (!stale) setError(true);
+      })
+      .finally(() => {
+        if (!stale) setLoading(false);
+      });
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tid, mid, reloadNonce]);
 
   const allAnswered = quiz ? quiz.questions.every((q) => (answers[q.id] ?? '').trim().length > 0) : false;
 
@@ -75,6 +87,7 @@ export default function QuizView() {
   const handleRetake = () => {
     setResult(null);
     setSlideshow(null);
+    setSlideshowError(false);
     setAnswers({});
     setJustSubmitted(false);
   };
@@ -88,7 +101,7 @@ export default function QuizView() {
   }
 
   if (error || !quiz) {
-    return <ErrorState onRetry={load} />;
+    return <ErrorState onRetry={reload} />;
   }
 
   if (result) {
@@ -234,6 +247,7 @@ export default function QuizView() {
                 value={answers[q.id] ?? ''}
                 onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
                 placeholder="Your answer..."
+                maxLength={20000}
               />
             </div>
           );

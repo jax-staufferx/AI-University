@@ -5,6 +5,7 @@ without explicit user confirmation."""
 from datetime import datetime, timezone
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import ContentType, LearnerProfile, LearningMethod, MonitorProposal, ProposalStatus
@@ -26,6 +27,15 @@ def log_session(db: Session, content_type: ContentType, method: LearningMethod, 
     if profile is None:
         profile = LearnerProfile(content_type=content_type, method=method, sessions_count=0, score_sum=0, weight=1.0)
         db.add(profile)
+        try:
+            db.flush()  # surface a unique-constraint collision now, before we mutate counters
+        except IntegrityError:
+            # Another session's grading created this (content_type, method) row concurrently —
+            # roll back and re-fetch the existing one instead of 500ing a completed grade.
+            db.rollback()
+            profile = (
+                db.query(LearnerProfile).filter_by(content_type=content_type, method=method).one()
+            )
     profile.sessions_count += 1
     profile.score_sum += score
     db.commit()
