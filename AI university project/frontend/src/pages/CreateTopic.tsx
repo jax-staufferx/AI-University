@@ -142,7 +142,10 @@ export default function CreateTopic() {
   }
 
   if (error) {
-    return <ErrorState onRetry={() => { setError(false); navigate('/'); }} />;
+    // Clear the error and fall back to the form — the title, tier, depth and answers are all
+    // still in state, so the user can just hit Start Research again instead of re-entering
+    // everything after a transient research failure.
+    return <ErrorState onRetry={() => setError(false)} />;
   }
 
   if (phase === 'questions') {
@@ -177,6 +180,7 @@ export default function CreateTopic() {
                   return next;
                 })}
                 placeholder="(optional)"
+                maxLength={2000}
               />
             </div>
           ))}
@@ -219,6 +223,7 @@ export default function CreateTopic() {
             onChange={(e) => setTitle(e.target.value)}
             placeholder="e.g. Bayesian inference, Rust ownership model, history of the Silk Road..."
             autoFocus
+            maxLength={500}
           />
         </div>
 

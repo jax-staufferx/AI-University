@@ -20,21 +20,43 @@ export default function ModuleView() {
   const [showHistory, setShowHistory] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
   const [deleting, setDeleting] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
-  const load = () => {
+  const reload = () => setReloadNonce((n) => n + 1);
+
+  // Stale-guarded: a slow module fetch mustn't overwrite the view after the user has navigated
+  // to a different module.
+  useEffect(() => {
+    let stale = false;
     setLoading(true);
     setError(false);
     setErrorMessage(undefined);
     getModule(tid, mid)
-      .then(setModule)
+      .then((m) => {
+        if (!stale) setModule(m);
+      })
       .catch((err) => {
+        if (stale) return;
         setErrorMessage(err instanceof Error ? err.message : undefined);
         setError(true);
       })
-      .finally(() => setLoading(false));
-  };
+      .finally(() => {
+        if (!stale) setLoading(false);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [tid, mid, reloadNonce]);
 
-  useEffect(load, [tid, mid]);
+  // A pending module is still being researched in the background (course tiers) — poll so it
+  // flips to its digest on its own instead of stranding the user on a spinner until they reload.
+  useEffect(() => {
+    if (module?.status !== 'pending') return;
+    const interval = setInterval(() => {
+      getModule(tid, mid).then(setModule).catch(() => {});
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [tid, mid, module?.status]);
 
   const handleStartSession = async (method?: string) => {
     setStarting(true);
@@ -80,7 +102,7 @@ export default function ModuleView() {
   }
 
   if (error || !module) {
-    return <ErrorState message={errorMessage} onRetry={load} />;
+    return <ErrorState message={errorMessage} onRetry={reload} />;
   }
 
   if (!module.unlocked) {

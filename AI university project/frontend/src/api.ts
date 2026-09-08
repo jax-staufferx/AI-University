@@ -19,6 +19,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    // Session expired or missing on a protected route — signal the LoginGate to re-show the
+    // login form instead of leaving every page stuck on a generic "try again" error.
+    if (res.status === 401 && !path.startsWith('/auth/')) {
+      window.dispatchEvent(new Event('auth:expired'));
+    }
     if (res.status === 402 && body.detail) {
       const err = new Error('BUDGET_EXCEEDED') as Error & { budgetError: BudgetError };
       err.budgetError = body.detail as BudgetError;

@@ -4,10 +4,14 @@ have their own username/password rather than one shared password for everyone.
 
 Sessions are a signed cookie (HMAC, no server-side session store) encoding the username."""
 
+import base64
+import binascii
 import hashlib
 import hmac
 import secrets
 
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -37,7 +41,12 @@ def _sign(value: str) -> str:
 
 
 def make_session_token(username: str) -> str:
-    return f"{username}.{_sign(username)}"
+    # Base64url-encode the username so the cookie value is always header-safe — a raw
+    # username with non-latin-1 characters (e.g. "José", "日本語") or a newline would
+    # otherwise crash the Set-Cookie header encoding. base64url never emits a '.', so the
+    # rsplit on '.' in verification stays unambiguous.
+    encoded = base64.urlsafe_b64encode(username.encode()).decode()
+    return f"{encoded}.{_sign(username)}"
 
 
 def verify_session_token(token: str | None) -> str | None:
@@ -48,20 +57,35 @@ def verify_session_token(token: str | None) -> str | None:
     """
     if not settings.session_secret or not token or "." not in token:
         return None
-    username, signature = token.rsplit(".", 1)
+    encoded, signature = token.rsplit(".", 1)
+    try:
+        username = base64.urlsafe_b64decode(encoded.encode()).decode()
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
     if not hmac.compare_digest(signature, _sign(username)):
         return None
     return username
 
 
 def get_account_by_username(db: Session, username: str) -> Account | None:
-    return db.query(Account).filter(Account.username.ilike(username)).first()
+    # Case-insensitive exact match. NOT ilike() — ilike treats '%' and '_' in the supplied
+    # username as SQL wildcards, so "jane_doe" would match "janexdoe" and a bare "%" would
+    # match any account; plain lowercased equality avoids that.
+    return db.query(Account).filter(func.lower(Account.username) == username.lower()).first()
 
 
-def create_account(db: Session, username: str, password: str) -> Account:
+def create_account(db: Session, username: str, password: str) -> Account | None:
+    """Returns the new account, or None if the username was taken. Catching IntegrityError
+    (rather than only pre-checking) closes the race where two concurrent registrations both
+    pass the existence check and then collide on the unique index — without it, all but one
+    of the racers 500s instead of getting a clean 'username taken'."""
     account = Account(username=username, password_hash=hash_password(password))
     db.add(account)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return None
     db.refresh(account)
     return account
 

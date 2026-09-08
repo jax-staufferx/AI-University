@@ -83,4 +83,8 @@ if FRONTEND_DIST.exists():
         # Client-side routes (e.g. /topics/5) don't correspond to real files — always
         # hand back index.html and let React Router take it from there. Registered last
         # so it only ever catches paths no earlier route (api/health/docs/assets) matched.
+        # An unmatched /api/* path is a real 404, though — serving the SPA there would hand
+        # API clients a 200 HTML page for a typo'd endpoint and mask the error.
+        if full_path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
         return FileResponse(FRONTEND_DIST / "index.html")

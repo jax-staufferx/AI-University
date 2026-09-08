@@ -26,30 +26,48 @@ export default function TopicView() {
   const [error, setError] = useState(false);
   const [budgetError, setBudgetError] = useState<BudgetError | null>(null);
   const [continuing, setContinuing] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
-  const load = () => {
+  const reload = () => setReloadNonce((n) => n + 1);
+
+  // Stale-guarded so a slow response for a previous topic can't land after the user has already
+  // navigated to a different one and overwrite it.
+  useEffect(() => {
+    let stale = false;
     setLoading(true);
     setError(false);
     Promise.all([getTopic(tid), getConnections(tid)])
       .then(([t, c]) => {
+        if (stale) return;
         setTopic(t);
         setConnections(c);
       })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  };
+      .catch(() => {
+        if (!stale) setError(true);
+      })
+      .finally(() => {
+        if (!stale) setLoading(false);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [tid, reloadNonce]);
 
-  useEffect(load, [tid]);
-
-  // While the course-tier background researcher is still working through modules, poll
-  // so the progress bar actually moves instead of requiring a manual refresh.
+  // Poll while research is actively running — either the course-tier background researcher
+  // working through modules, or the initial "planning" pass — so the view updates on its own
+  // instead of requiring a manual refresh. Stop once an error is recorded so a stuck/failed
+  // topic surfaces the error instead of spinning forever.
+  const stillWorking =
+    !!topic &&
+    !topic.research_error &&
+    (topic.research_in_progress || (topic.status === 'planning' && topic.modules.length === 0));
   useEffect(() => {
-    if (!topic?.research_in_progress) return;
+    if (!stillWorking) return;
     const interval = setInterval(() => {
       getTopic(tid).then(setTopic).catch(() => {});
     }, RESEARCH_POLL_MS);
     return () => clearInterval(interval);
-  }, [tid, topic?.research_in_progress]);
+  }, [tid, stillWorking]);
 
   const handleContinue = async () => {
     if (!budgetError) return;
@@ -75,7 +93,7 @@ export default function TopicView() {
   }
 
   if (error || !topic) {
-    return <ErrorState onRetry={load} />;
+    return <ErrorState onRetry={reload} />;
   }
 
   if (budgetError) {
@@ -103,10 +121,21 @@ export default function TopicView() {
           <h1 className="page-title">{topic.title}</h1>
           <Link to="/" className="btn btn-secondary">Back</Link>
         </div>
-        <LoadingState
-          messages={['Researching your topic...', 'Reading through sources...', 'Structuring the curriculum...']}
-          ariaLabel="Researching"
-        />
+        {topic.research_error ? (
+          <div className="empty-state">
+            <p className="error-text" role="alert">
+              Research hit a problem and stopped: {topic.research_error}
+            </p>
+            <p className="empty-body">
+              Nothing was lost — you can delete this topic and try again from the dashboard.
+            </p>
+          </div>
+        ) : (
+          <LoadingState
+            messages={['Researching your topic...', 'Reading through sources...', 'Structuring the curriculum...']}
+            ariaLabel="Researching"
+          />
+        )}
       </div>
     );
   }

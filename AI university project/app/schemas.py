@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import ContentDepth, ContentType, FormatTier, LearningMethod, ModuleStatus, ProposalStatus, TopicStatus
 
@@ -11,14 +11,14 @@ from app.models import ContentDepth, ContentType, FormatTier, LearningMethod, Mo
 
 
 class RegisterRequest(BaseModel):
-    username: str
-    password: str
-    confirm_password: str
+    username: str = Field(max_length=50)
+    password: str = Field(max_length=200)
+    confirm_password: str = Field(max_length=200)
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(max_length=50)
+    password: str = Field(max_length=200)
 
 
 class AuthStatus(BaseModel):
@@ -32,8 +32,8 @@ class AuthStatus(BaseModel):
 
 
 class ProgramCreate(BaseModel):
-    title: str
-    description: str | None = None
+    title: str = Field(max_length=300)
+    description: str | None = Field(default=None, max_length=2000)
 
 
 class ProgramListItem(BaseModel):
@@ -60,15 +60,15 @@ class TopicMoveRequest(BaseModel):
 
 
 class TopicCreate(BaseModel):
-    title: str
+    title: str = Field(max_length=500)
     format_tier: FormatTier
     depth: ContentDepth = ContentDepth.intermediate
     program_id: int | None = None
-    learner_context: str | None = None
+    learner_context: str | None = Field(default=None, max_length=10000)
 
 
 class IntakeQuestionsRequest(BaseModel):
-    title: str
+    title: str = Field(max_length=500)
     format_tier: FormatTier
 
 
@@ -133,8 +133,8 @@ class TopicDetail(BaseModel):
 
 class OutlineModuleEdit(BaseModel):
     order_index: int
-    title: str
-    one_liner: str | None = None
+    title: str = Field(max_length=500)
+    one_liner: str | None = Field(default=None, max_length=1000)
     content_type: ContentType = ContentType.mixed
 
 
@@ -194,8 +194,8 @@ class QuizOut(BaseModel):
 
 
 class QuizAnswer(BaseModel):
-    question_id: str
-    response: str
+    question_id: str = Field(max_length=64)
+    response: str = Field(max_length=20000)
 
 
 class QuizSubmitRequest(BaseModel):
@@ -270,7 +270,7 @@ class SessionDetail(SessionSummary):
 
 
 class SessionSubmitRequest(BaseModel):
-    response: str
+    response: str = Field(max_length=50000)
 
 
 class ExecutionResult(BaseModel):

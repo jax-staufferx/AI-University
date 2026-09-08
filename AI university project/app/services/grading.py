@@ -2,6 +2,8 @@
 participation trophies, no progression gate — a bad result gets flagged and logged, and the
 learner moves on regardless."""
 
+import re
+
 from app.models import LearningMethod, Module
 from app.services import anthropic_client as ai
 from app.services import sandbox
@@ -48,7 +50,7 @@ def grade_session(
     execution_result: sandbox.SandboxResult | None = None
 
     if method == LearningMethod.ship_it and _looks_like_code(final_response):
-        execution_result = sandbox.run_python(final_response)
+        execution_result = sandbox.run_python(_extract_code(final_response))
         status = "TIMED OUT" if execution_result.timed_out else f"exit code {execution_result.return_code}"
         network_note = (
             "network was sandboxed (isolated namespace)"
@@ -71,7 +73,10 @@ def grade_session(
         f"{execution_note}\n\nGrade this."
     )
     result = ai.structured_call(system=_SYSTEM, user_prompt=prompt, schema=_GRADE_SCHEMA, max_tokens=1500)
-    score = max(0, min(100, int(result.get("score", 0))))
+    try:
+        score = max(0, min(100, int(result.get("score", 0))))
+    except (TypeError, ValueError):
+        score = 0  # model returned a non-numeric score; don't 500 after the grading call already ran
     feedback = result.get("feedback", "")
     return score, feedback, execution_result
 
@@ -79,3 +84,17 @@ def grade_session(
 def _looks_like_code(text: str) -> bool:
     markers = ("def ", "import ", "class ", "print(", "```")
     return any(m in text for m in markers)
+
+
+_FENCE_RE = re.compile(r"```(?:[A-Za-z0-9_+-]*)\n?(.*?)```", re.DOTALL)
+
+
+def _extract_code(text: str) -> str:
+    """If the learner wrapped their code in markdown fences (```python ... ```), run the code
+    inside the fences, not the literal backticks — otherwise every fenced submission is a
+    guaranteed SyntaxError and gets unfairly failed on 'did it run'. If there are fenced
+    blocks, concatenate them; otherwise run the text as-is."""
+    blocks = _FENCE_RE.findall(text)
+    if blocks:
+        return "\n\n".join(block.strip("\n") for block in blocks)
+    return text

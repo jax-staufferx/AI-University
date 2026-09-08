@@ -20,17 +20,29 @@ def _set_session_cookie(response: Response, username: str) -> None:
     )
 
 
+MAX_USERNAME_LEN = 50
+MAX_PASSWORD_LEN = 200
+
+
 @router.post("/register", response_model=AuthStatus)
 def register(payload: RegisterRequest, response: Response, db: Session = Depends(get_db)):
     username = payload.username.strip()
     if not username or not payload.password:
         raise HTTPException(status_code=400, detail="Username and password are required")
+    if len(username) > MAX_USERNAME_LEN:
+        raise HTTPException(status_code=400, detail=f"Username must be {MAX_USERNAME_LEN} characters or fewer")
+    if any(ord(c) < 32 for c in username):  # control chars (newline, tab, etc.)
+        raise HTTPException(status_code=400, detail="Username contains invalid characters")
+    if len(payload.password) > MAX_PASSWORD_LEN:
+        raise HTTPException(status_code=400, detail=f"Password must be {MAX_PASSWORD_LEN} characters or fewer")
     if payload.password != payload.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords don't match")
     if auth_service.get_account_by_username(db, username) is not None:
         raise HTTPException(status_code=409, detail="That username is already taken")
 
-    auth_service.create_account(db, username, payload.password)
+    account = auth_service.create_account(db, username, payload.password)
+    if account is None:  # lost a concurrent-registration race for the same username
+        raise HTTPException(status_code=409, detail="That username is already taken")
     _set_session_cookie(response, username)
     return AuthStatus(authenticated=True, username=username)
 
